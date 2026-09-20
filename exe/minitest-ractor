@@ -38,7 +38,7 @@ parser = OptionParser.new do |opts|
     options[:workers] = n
   end
 
-  opts.on "-s", "--seed N", Integer, "Minitest seed (default: 42)" do |n|
+  opts.on "-s", "--seed N", Integer, "Minitest seed (default: SEED, else 42)" do |n|
     options[:seed] = n
   end
 

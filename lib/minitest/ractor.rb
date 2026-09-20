@@ -21,6 +21,32 @@ module Minitest
     # from success and hands back a proof that was never attempted. So it is an error, never a
     # warning, and the run stops.
     class ProofNotAttempted < StandardError; end
+
+    # Used when nothing else has chosen one. Fixed rather than random, which is the opposite of
+    # what Minitest does and deliberate: an audit is something you run twice, once before a fix
+    # and once after, and a different dispatch order each time makes the two runs harder to
+    # compare than they need to be. SEED, or an explicit argument, overrides it.
+    DEFAULT_SEED = 42
+
+    # Makes sure Minitest has a seed, and answers what it is.
+    #
+    # CALL THIS BEFORE ENUMERATING TESTS, not before dispatching them. Minitest::Test's own
+    # .runnable_methods calls `srand Minitest.seed`, and the seed is nil until something sets
+    # it, so merely asking a class what tests it has raises
+    #
+    #   no implicit conversion of nil into Integer (TypeError)
+    #
+    # from inside Kernel#srand — an error that names nothing you wrote and no seed at all.
+    # Minitest.run sets the seed before init_plugins, so the plugin path never meets this. It is
+    # anything driving the executor directly that does, which is the audit runner, the
+    # benchmark, and anybody using Executor as a library.
+    #
+    # Leaves a seed somebody has already chosen alone.
+    def self.seed!(value = nil, env = ENV)
+      ::Minitest.seed = value if value
+      ::Minitest.seed ||= (env["SEED"] || DEFAULT_SEED).to_i
+      ::Minitest.seed
+    end
   end
 end
 

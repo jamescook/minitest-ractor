@@ -18,6 +18,7 @@
 require "benchmark/ips"
 require "etc"
 require "minitest"
+require "minitest/ractor"
 require "minitest/ractor/executor"
 require_relative "dummy_suite"
 
@@ -74,9 +75,9 @@ end
 
 workers = Integer(ENV.fetch("BENCH_WORKERS", Etc.nprocessors))
 
-# runnable_methods calls srand with it, and nothing has set it because Minitest.run is not
-# involved here. Fixed rather than random so every mode dispatches the same order.
-Minitest.seed = Integer(ENV.fetch("BENCH_SEED", 42))
+# Before DummySuite.jobs, which asks each class for its runnable_methods, which srands with the
+# seed. Nothing has set one because Minitest.run is not involved here.
+Minitest::Ractor.seed! Integer(ENV.fetch("BENCH_SEED", 42))
 jobs = DummySuite.jobs
 
 modes = {

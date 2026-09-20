@@ -48,7 +48,7 @@ module Minitest
 
       attr_reader :paths
 
-      def initialize(paths, workers: nil, seed: 42, limit: Inventory::DEFAULT_LIMIT)
+      def initialize(paths, workers: nil, seed: nil, limit: Inventory::DEFAULT_LIMIT)
         @paths   = Array(paths)
         @workers = workers || Executor.default_size
         @seed    = seed
@@ -72,9 +72,10 @@ module Minitest
         loaded = load_files
         raise NothingToRun, "no test files under #{@paths.join(', ')}" if loaded.empty?
 
-        # runnable_methods srands with it, and it is nil until somebody sets it. Fixed by default
-        # so two audits of the same checkout dispatch in the same order.
-        ::Minitest.seed = @seed
+        # Before anything asks a class what tests it has, because runnable_methods srands with
+        # the seed and it is nil until something sets it. Nothing has, since this never goes
+        # through Minitest.run.
+        ::Minitest::Ractor.seed! @seed
 
         jobs = jobs_in suites
         raise NothingToRun, "loaded #{loaded.size} files but found no tests" if jobs.empty?
