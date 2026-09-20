@@ -1,7 +1,7 @@
 # frozen_string_literal: true
 
 require "minitest"
-require_relative "../ractor"
+require_relative "errors"
 require_relative "executor"
 require_relative "reporter"
 

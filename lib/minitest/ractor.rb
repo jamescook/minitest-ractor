@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require_relative "ractor/version"
+require_relative "ractor/errors"
 
 module Minitest
   # Runs a Minitest suite in a pool of Ractors instead of a pool of threads, so that any shared
@@ -16,11 +17,10 @@ module Minitest
   # is worth keeping. It is worth keeping because `require "minitest/ractor"` is what somebody
   # will type.
   module Ractor
-    # Raised when the pool was asked for but nothing can, or did, reach a Ractor. A green run
-    # that touched no Ractor is the worst failure this tool has, because it is indistinguishable
-    # from success and hands back a proof that was never attempted. So it is an error, never a
-    # warning, and the run stops.
-    class ProofNotAttempted < StandardError; end
+    # ProofNotAttempted lives in ractor/errors.rb, which is a leaf that requires nothing. It has
+    # to: this file loads the plugin, the plugin loads Plugin, and Plugin raises
+    # ProofNotAttempted — so if Plugin reached back here for it, every run of every suite using
+    # this gem would print "circular require considered harmful".
 
     # Used when nothing else has chosen one. Fixed rather than random, which is the opposite of
     # what Minitest does and deliberate: an audit is something you run twice, once before a fix
@@ -57,6 +57,4 @@ end
 # ask, and it is deliberately the whole of it: the flag appears, MT_RACTOR starts being read, and
 # nothing else changes until one of them says so.
 #
-# Required at the BOTTOM because the plugin reaches back for ProofNotAttempted above. Ruby
-# tolerates the cycle only in this direction.
 require_relative "ractor_plugin"

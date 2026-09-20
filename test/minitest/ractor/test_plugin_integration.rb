@@ -33,6 +33,22 @@ class TestPluginIntegration < Minitest::Test
     output.scan(/WHERE: (\w+)/).flatten.sort
   end
 
+  # Requiring the gem must be silent under -w.
+  #
+  # It was not: minitest/ractor.rb loads the plugin, the plugin loads Plugin, and Plugin reached
+  # back here for ProofNotAttempted, so every run of every suite using this gem printed "circular
+  # require considered harmful". Nothing caught it because this suite and every probe run with
+  # -W0 — the flag people reach for to silence Ruby's Ractor warning silences this too. Reported
+  # from a real project, not found here.
+  def test_requiring_the_gem_warns_about_nothing
+    output, status = Open3.capture2e BASE_ENV, RbConfig.ruby, "-w", "-I#{LIB}",
+                                     "-e", 'require "minitest/ractor"'
+
+    assert_predicate status, :success?, output
+    refute_match(/circular require/, output)
+    refute_match(/warning/i, output, "requiring this gem should say nothing at all")
+  end
+
   # THE GUARANTEE. The fixture requires this gem, the way a test_helper would, and then runs
   # without asking for Ractors. Nothing may change: same executor, same place, no inventory.
   #
