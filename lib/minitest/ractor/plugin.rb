@@ -11,10 +11,11 @@ module Minitest
     # minitest/ractor_plugin.rb, which is only the file RubyGems finds, so that the decisions can
     # be tested without loading anything into the world.
     #
-    # WHY OPT-IN IS MANDATORY RATHER THAN POLITE. Minitest.load_plugins requires
-    # minitest/*_plugin.rb from EVERY installed gem on EVERY minitest run on the machine. The
-    # moment somebody installs this gem, its plugin file is loaded by suites that have never
-    # heard of it. Doing anything without being asked would hijack all of them.
+    # WHY OPT-IN. On minitest 5 it was survival: load_plugins required minitest/*_plugin.rb from
+    # every installed gem on every run, so acting at load time would have hijacked suites that
+    # had never heard of this one. Minitest 6 dropped that call, so now only people who required
+    # this gem by name are affected — and requiring a gem still is not the same as wanting every
+    # test in a Ractor today, so the flag and the env var remain the only two ways in.
     #
     # WHY THERE ARE TWO WAYS IN, AND THEY ARE NOT INTERCHANGEABLE. --ractor is the one to use and
     # the one that reads well. But a flag is not visible until Minitest.run parses the command
@@ -44,11 +45,16 @@ module Minitest
       # parallelize_me! only installs Parallel::Test::ClassMethods, whose run reads
       # Minitest.parallel_executor at DISPATCH time rather than remembering one.
       def self.init(options, env = ENV, reporter: ::Minitest.reporter)
+        if declined? options
+          restore_thread_executor env if ractor_pool_installed?
+          return :declined
+        end
+
         return :not_asked unless asked_for? options, env
 
         unreachable!(env) unless reachable? env
 
-        ::Minitest.parallel_executor = Executor.new workers(env) unless ours?
+        ::Minitest.parallel_executor = Executor.new workers(env) unless ractor_pool_installed?
         install_reporter reporter, options
         :installed
       end
@@ -67,6 +73,30 @@ module Minitest
         options[:ractor] || opted_in?(env)
       end
 
+      # --no-ractor. Distinct from "not asked": nil means nobody said anything, false means
+      # somebody said no, and only the second one outranks MT_RACTOR.
+      def self.declined?(options)
+        options[:ractor] == false
+      end
+
+      # Puts back the thread executor minitest would have built, replacing ours.
+      #
+      # Needed because --no-ractor can only be read after MT_RACTOR has already installed the
+      # pool at load time, and parallelize_me! has already seen it and made the classes parallel.
+      # That cannot be taken back: the classes now dispatch through
+      # Minitest.parallel_executor whatever it holds. Leaving ours there would run everything in
+      # Ractors after somebody asked for that not to happen, and emptying the slot would dispatch
+      # into nil.
+      #
+      # The thread count is the same sum minitest.rb does, so this is what would have been there
+      # rather than a guess at it. Floored at one: under MT_CPU=1 minitest builds no executor at
+      # all, but by now something has to answer.
+      def self.restore_thread_executor(env = ENV)
+        threads = (env[THREADS] || Etc.nprocessors).to_i
+
+        ::Minitest.parallel_executor = ::Minitest::Parallel::Executor.new [threads, 1].max
+      end
+
       def self.opted_in?(env = ENV)
         truthy? env[OPT_IN]
       end
@@ -79,7 +109,7 @@ module Minitest
         !["", "0", "false", "no"].include?(value.strip.downcase)
       end
 
-      def self.ours?
+      def self.ractor_pool_installed?
         ::Minitest.parallel_executor.is_a? Executor
       end
 
@@ -97,7 +127,7 @@ module Minitest
       def self.reachable?(env = ENV)
         threads = env[THREADS]
 
-        threads.nil? || threads.to_i > 1 || ours?
+        threads.nil? || threads.to_i > 1 || ractor_pool_installed?
       end
 
       # THE ONE CASE WHERE FAILING LOUDLY IS THE ENTIRE POINT.

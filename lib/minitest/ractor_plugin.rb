@@ -33,8 +33,12 @@ Minitest.extensions << "ractor" unless Minitest.extensions.include? "ractor"
 
 module Minitest
   def self.plugin_ractor_options(opts, options) # :nodoc:
-    opts.on "--ractor", "Run tests in a pool of Ractors, and inventory what is not Ractor-safe" do
-      options[:ractor] = true
+    # --no-ractor comes free with the [no-] form, and earns its place: MT_RACTOR exported in a
+    # shell or set on a CI job would otherwise be impossible to switch off for a single run.
+    desc = "Run tests in a pool of Ractors and report what is not Ractor-safe"
+
+    opts.on "--[no-]ractor", desc do |wanted|
+      options[:ractor] = wanted
     end
   end
 

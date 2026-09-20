@@ -98,6 +98,35 @@ class TestPlugin < Minitest::Test
     assert reporter.reporters.any?(Minitest::Ractor::Reporter)
   end
 
+  # --no-ractor has to beat MT_RACTOR, or somebody with the variable exported has no way to turn
+  # this off for one run — which is the whole reason the switch exists.
+  def test_declining_on_the_command_line_beats_the_environment
+    Minitest.parallel_executor = nil
+    Plugin.install_at_load({ "MT_RACTOR" => "1" })
+
+    assert_equal :declined, Plugin.init({ ractor: false }, { "MT_RACTOR" => "1" }, reporter: nil)
+  end
+
+  # ...and declining has to actively UNDO the load-time install, because by now parallelize_me!
+  # has already run and the classes are parallel. Leaving our pool in place would run everything
+  # in Ractors anyway; leaving nothing in place would dispatch into nil.
+  def test_declining_puts_back_the_executor_minitest_would_have_had
+    Minitest.parallel_executor = nil
+    Plugin.install_at_load({ "MT_RACTOR" => "1" })
+
+    Plugin.init({ ractor: false }, { "MT_RACTOR" => "1" }, reporter: nil)
+
+    refute_predicate Plugin, :ractor_pool_installed?
+    assert_kind_of Minitest::Parallel::Executor, Minitest.parallel_executor
+  end
+
+  def test_declining_when_nothing_was_installed_leaves_it_alone
+    Minitest.parallel_executor = nil
+
+    assert_equal :declined, Plugin.init({ ractor: false }, {}, reporter: nil)
+    assert_nil Minitest.parallel_executor
+  end
+
   def test_init_does_nothing_when_nobody_asked
     Minitest.parallel_executor = nil
     reporter = Minitest::CompositeReporter.new

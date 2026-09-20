@@ -86,6 +86,28 @@ class TestPluginIntegration < Minitest::Test
     assert_includes output, "PARALLEL: parallel", "parallelize_me! has to have taken"
   end
 
+  # The debugging switch. MT_RACTOR exported in a shell or set on a CI job is otherwise
+  # impossible to turn off for one run, and "run this the normal way once" is the first thing
+  # anybody does when a finding looks wrong.
+  def test_declining_on_the_command_line_beats_the_environment
+    output, status = run_suite env: { "MT_RACTOR" => "1" }, args: ["--no-ractor"]
+
+    assert_predicate status, :success?, output
+    assert_equal %w[main main], workers_in(output), "no test should have gone near a Ractor"
+    refute_includes output, "minitest-ractor:", "and no inventory should be printed"
+  end
+
+  # Declining after MT_RACTOR already installed the pool at load time is the interesting half:
+  # parallelize_me! has run by then, so the classes are parallel and something still has to
+  # dispatch them.
+  def test_declining_leaves_a_working_suite_even_with_threads_disabled
+    output, status = run_suite env: { "MT_RACTOR" => "1", "MT_CPU" => "1" }, args: ["--no-ractor"]
+
+    assert_predicate status, :success?, output
+    assert_equal %w[main main], workers_in(output)
+    assert_includes output, "2 runs", "both tests still have to run"
+  end
+
   def test_the_pool_size_can_be_set_from_the_environment
     output, status = run_suite env: { "MT_RACTOR" => "1", "MT_RACTOR_WORKERS" => "1" }
 
