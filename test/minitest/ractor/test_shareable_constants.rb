@@ -34,6 +34,40 @@ class TestShareableConstants < Minitest::Test
 
   # The assertion that actually matters. Everything above is a proxy for this: can a test run
   # in a worker at all, and does what happened to it survive the trip back?
+  def test_patched_accounts_for_every_constant_it_touches
+    assert_equal Patch::NAMES.sort, Patch.patched.keys.sort
+
+    Patch.patched.each_value do |what|
+      assert_includes %i[made_shareable left_alone], what
+    end
+  end
+
+  def test_applying_again_leaves_everything_alone
+    Patch.apply!
+
+    assert_equal %i[left_alone], Patch.patched.values.uniq
+  end
+
+  def test_the_record_is_itself_shareable
+    # A tool that demands the code under test hold no shared mutable state should hold none.
+    assert Ractor.shareable?(Patch.patched)
+  end
+
+  # Being shareable is what makes this readable from a worker at all. A module ivar holding an
+  # unshareable value raises from a non-main Ractor; holding a shareable one does not.
+  def test_a_worker_can_read_the_record
+    from_worker = Ractor.new { Minitest::Ractor::ShareableConstants.patched }.value
+
+    assert_equal Patch.patched, from_worker
+  end
+
+  def test_report_names_the_constants_and_the_minitest_it_patched
+    report = Patch.report
+
+    assert_includes report, "Minitest #{Minitest::VERSION}"
+    Patch::NAMES.each { |name| assert_includes report, name.to_s }
+  end
+
   def test_a_result_crosses_home_from_a_ractor
     %w[test_passes test_fails test_errors test_skips].each do |name|
       result = Ractor.new(CrossingFixture, name) { |klass, m| klass.new(m).run }.value

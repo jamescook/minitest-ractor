@@ -27,12 +27,38 @@ module Minitest
       # Idempotent: a constant that is already shareable is left alone, so requiring this file
       # twice, or calling apply! after Minitest has already been patched, costs nothing.
       def self.apply!
-        NAMES.each { |name| make_shareable name }
+        @patched = ::Ractor.make_shareable(NAMES.to_h { |name| [name, make_shareable(name)] })
         self
       end
 
       def self.applied?
         NAMES.all? { |name| ::Ractor.shareable?(::Minitest::Test.const_get(name)) }
+      end
+
+      # What apply! actually did, per constant: :made_shareable or :left_alone. Worth being
+      # able to ask, because this gem edits somebody else's library in place and the first
+      # question when Minitest misbehaves is which parts of it are no longer stock.
+      #
+      # Kept shareable rather than a plain mutable Hash for two reasons. A tool that demands the
+      # code under test hold no shared mutable state has no business holding any itself; and a
+      # worker can then actually read this, which it could not otherwise.
+      #
+      # The rule is narrower than "a Ractor may not touch class ivars", which is how it is
+      # usually repeated. A worker may read an instance variable of a class or module perfectly
+      # well — what it may not do is get an UNSHAREABLE value out of one. Ruby says so in as
+      # many words: "can not get unshareable values from instance variables of classes/modules
+      # from non-main Ractors". probes/ractor_module_ivar.rb is the demonstration.
+      def self.patched
+        @patched ||= ::Ractor.make_shareable({})
+      end
+
+      def self.report
+        return "minitest-ractor has not patched Minitest." if patched.empty?
+
+        patched
+          .map { |name, what| format("  Minitest::Test::%<name>-22s %<what>s", name: name, what: what) }
+          .unshift("minitest-ractor patched Minitest #{::Minitest::VERSION}:")
+          .join("\n")
       end
 
       def self.make_shareable(name)
@@ -44,11 +70,12 @@ module Minitest
         end
 
         value = ::Minitest::Test.const_get name
-        return if ::Ractor.shareable?(value)
+        return :left_alone if ::Ractor.shareable?(value)
 
         shareable = ::Ractor.make_shareable value
         ::Minitest::Test.send :remove_const, name
         ::Minitest::Test.const_set name, shareable
+        :made_shareable
       end
       private_class_method :make_shareable
     end
