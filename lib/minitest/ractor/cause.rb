@@ -79,6 +79,18 @@ module Minitest
                  "below, and re-run probes/isolation_error_census.rb."
       }.freeze
 
+      # The method name out of a backtrace frame: "foo.rb:12:in 'Fiddle::Handle#initialize'".
+      METHOD_IN_FRAME = /:in '(?<method>.+)'\s*\z/
+
+      # Kinds whose identity is the method named in the first frame rather than the frame itself.
+      #
+      # Ractor::UnsafeError names nothing in its message, and its first frame is the CALLER's
+      # line with the refusing method's name on it. Identifying by the whole frame therefore
+      # makes one unsafe C extension into one cause per call site — four call sites gave four
+      # causes when measured — which is the wall of identical failures the report exists to
+      # replace. The extension is what somebody fixes, so the extension is the cause.
+      IDENTIFIED_BY_METHOD = %i[unsafe_method].freeze
+
       attr_reader :kind, :variable, :owner, :origin, :message
 
       # Returns nil for anything that is not a refusal — that is an ordinary failure, and turning
@@ -111,7 +123,7 @@ module Minitest
         @kind     = kind
         @message  = message
         @origin   = origin
-        @variable = capture match, :variable
+        @variable = capture(match, :variable) || method_in_origin
         @owner    = capture match, :owner
         freeze
       end
@@ -164,6 +176,12 @@ module Minitest
         return nil unless match&.names&.include?(name.to_s)
 
         match[name]
+      end
+
+      def method_in_origin
+        return nil unless IDENTIFIED_BY_METHOD.include?(@kind)
+
+        @origin&.match(METHOD_IN_FRAME)&.[](:method)
       end
     end
   end

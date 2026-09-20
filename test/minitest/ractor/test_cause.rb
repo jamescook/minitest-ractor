@@ -141,6 +141,30 @@ class TestCause < Minitest::Test
     assert_equal 1, [here, there].uniq.size
   end
 
+  # The brief's one explicit demand on the report: a C extension that refuses must surface as ONE
+  # cause, not hundreds. Ractor::UnsafeError names nothing, and its first frame is the CALLER's
+  # line carrying the refusing method's name — so identifying it by the frame makes one unsafe
+  # extension into one cause per call site. Measured in probes/unsafe_method_grouping.rb.
+  #
+  # Uses a real refusal rather than a built one, and says so when it cannot get one: most stdlib
+  # C extensions have been made Ractor-safe and Fiddle may follow, at which point this needs a
+  # new specimen rather than a quiet pass.
+  def unsafe_method_refusal(&)
+    require "fiddle"
+    refusal(&)
+  end
+
+  def test_a_refusing_c_extension_is_one_cause_however_many_places_reach_it
+    first  = Cause.from(unsafe_method_refusal { Fiddle::Handle.new })
+    second = Cause.from(unsafe_method_refusal { [Fiddle::Handle.new] })
+
+    skip "Fiddle no longer refuses; find another Ractor-unsafe extension" if first.nil?
+
+    assert_equal :unsafe_method, first.kind
+    assert_equal "Fiddle::Handle#initialize", first.subject
+    assert_equal first, second, "two call sites into one extension are one thing to fix"
+  end
+
   def test_unnamed_causes_in_different_places_are_different_causes
     first  = Cause.new kind: :ivar_write, message: "x", origin: "a.rb:1:in 'x'"
     second = Cause.new kind: :ivar_write, message: "x", origin: "b.rb:2:in 'y'"
