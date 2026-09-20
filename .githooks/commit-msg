@@ -12,9 +12,9 @@ if [ -x "$global_hook" ]; then
 fi
 
 # The global hook knows about bead ids but not about ADRs, which are excluded here.
-if grep -qE 'docs/adr/[0-9]' "$1"; then
-  echo "error: commit message references an architecture decision record. docs/adr/ is listed" >&2
-  echo "in .git/info/exclude, so that file exists on this machine only and the reference is" >&2
-  echo "dangling for everybody else. Say the reasoning instead of pointing at it." >&2
+if grep -qE 'docs/[A-Za-z0-9]' "$1"; then
+  echo "error: commit message references something under docs/, which is listed in" >&2
+  echo ".git/info/exclude. That file exists on this machine only, so the reference is dangling" >&2
+  echo "for everybody else. Say the reasoning instead of pointing at it." >&2
   exit 1
 fi

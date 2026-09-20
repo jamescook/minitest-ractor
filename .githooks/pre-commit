@@ -11,7 +11,7 @@ set -euo pipefail
 
 hook_dir=".githooks"
 bead_prefix="ractortest"     # matches .beads/ ids; bd's default prefix is the repo dir name
-adr_pattern='docs/adr/[0-9]'
+docs_pattern='docs/[A-Za-z0-9]'   # all of docs/ is excluded, not only docs/adr/
 bead_pattern="\\b${bead_prefix}-[a-z0-9]+(\\.[0-9]+)*\\b"
 
 status=0
@@ -32,8 +32,8 @@ while IFS= read -r file; do
   # Read the STAGED blob, not the working tree — they can differ.
   content="$(git show ":$file" 2>/dev/null)" || continue
 
-  if hits="$(printf '%s' "$content" | grep -nE "$adr_pattern")"; then
-    report "$file" "an architecture decision record" "$hits"
+  if hits="$(printf '%s' "$content" | grep -nE "$docs_pattern")"; then
+    report "$file" "something under docs/" "$hits"
   fi
 
   if hits="$(printf '%s' "$content" | grep -nEi "$bead_pattern")"; then
