@@ -34,6 +34,25 @@ class MaskedFixture < Minitest::Test
   def test_reads_it_plainly
     refute_empty self.class.memo
   end
+
+  # The same mask over a refusal Ruby does NOT name. Reading an unset ivar is fine — nil is
+  # shareable — so this fails on the write, and "can not set instance variables of
+  # classes/modules by non-main Ractors" says nothing about which class or which variable.
+  #
+  # That makes location the only identity such a cause has, which is what makes this pair worth
+  # having: with a named cause a wrong origin is invisible, because the name still groups it
+  # correctly. Here a wrong origin splits one cause in two.
+  def self.memoise
+    @memoise ||= +"built inside a worker, if it could be"
+  end
+
+  def test_expects_an_argument_error_from_a_write
+    assert_raises(ArgumentError) { self.class.memoise }
+  end
+
+  def test_writes_it_plainly
+    refute_empty self.class.memoise
+  end
 end
 
 Minitest::Runnable.runnables.delete MaskedFixture

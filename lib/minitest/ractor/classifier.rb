@@ -26,9 +26,10 @@ module Minitest
       def self.classify(result)
         return nil unless result.respond_to?(:failures)
 
-        refusal_in(result) do |cause|
-          return Finding.new(cause:, klass: result.klass, name: result.name, origin: cause.origin)
-        end
+        cause = refusal_in(result)
+        return nil unless cause
+
+        Finding.new(cause:, klass: result.klass, name: result.name, origin: cause.origin)
       end
 
       def self.findings(results)
@@ -46,8 +47,18 @@ module Minitest
                          .sort_by { |_, found| -found.size }
       end
 
-      # Walks every failure, and every exception behind every failure, until something is
-      # recognised as a refusal.
+      # The refusal behind a result, taken from the DEEPEST link of the chain that matches rather
+      # than the first.
+      #
+      # That is not a tie-break, it is the difference between naming the right file and the wrong
+      # one. Minitest builds the "exception expected, not ..." message by embedding the class,
+      # message and backtrace of whatever it caught, so an outer Minitest::Assertion literally
+      # quotes the refusal inside it. Matching the outer link therefore succeeds, reports the
+      # right KIND, and then takes its location from minitest's own assertions.rb.
+      #
+      # Measured against a real suite: matching the first link split one memoised ivar into 2123
+      # findings at the offending line and another 298 blamed on Minitest::Assertions#assert. An
+      # outer link can only ever be quoting an inner one, so the innermost match is the truth.
       #
       # Pass, fail and skip are not consulted. A refusal that a test caught and turned into a
       # skip is still the tool finding shared mutable state, and papering over it here would be
@@ -55,10 +66,8 @@ module Minitest
       # nothing of its own accord.
       def self.refusal_in(result)
         result.failures.each do |failure|
-          ErrorChain.of(failure).each do |error|
-            cause = Cause.from error
-            yield cause if cause
-          end
+          deepest = ErrorChain.of(failure).filter_map { |error| Cause.from error }.last
+          return deepest if deepest
         end
         nil
       end

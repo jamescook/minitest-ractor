@@ -43,6 +43,40 @@ class TestClassifier < Minitest::Test
     assert_equal "@memo from MaskedFixture", finding.cause.subject
   end
 
+  # Minitest builds the "exception expected, not ..." message by embedding the class, message AND
+  # backtrace of the exception it caught. So the outer Minitest::Assertion's own message CONTAINS
+  # the refusal's wording, and matching against it succeeds while pointing at entirely the wrong
+  # place — minitest's assertions.rb rather than the code at fault.
+  #
+  # Found against a real suite, where it split one cause into 2123 findings at the right line and
+  # 298 at Minitest::Assertions#assert. The rule is to take the DEEPEST match in the chain, never
+  # the first: an outer link can only ever be quoting an inner one.
+  def test_a_masked_finding_is_located_in_the_code_at_fault_not_in_minitest
+    finding = Classifier.classify results_for(MaskedFixture, %w[test_expects_an_argument_error]).first
+
+    assert_includes finding.origin.to_s, "masked_test.rb"
+    refute_includes finding.origin.to_s, "assertions.rb"
+  end
+
+  # The same mistake where it actually costs something. A named cause survives a wrong origin
+  # because the name still groups it; an unnamed one has nothing else to be identified by, so a
+  # wrong origin silently splits one problem into two entries in the inventory.
+  def test_a_masked_write_and_a_plain_one_are_one_cause_not_two
+    results = results_for MaskedFixture,
+                          %w[test_expects_an_argument_error_from_a_write test_writes_it_plainly]
+
+    inventory = Classifier.by_cause results
+
+    assert_equal 1, inventory.size, "a mask must not split one unnamed cause in two"
+
+    cause, found = inventory.first
+
+    assert_equal :ivar_write, cause.kind
+    refute_predicate cause, :named?
+    assert_includes cause.origin.to_s, "masked_test.rb"
+    assert_equal 2, found.size
+  end
+
   # The other half of the invariant, and the half that would quietly inflate every number this
   # tool prints. A suite full of ordinary failures must produce an empty inventory.
   def test_an_ordinary_failure_is_not_a_finding
