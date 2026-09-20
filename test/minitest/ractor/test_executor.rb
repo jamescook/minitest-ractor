@@ -6,6 +6,7 @@ require "recording_reporter"
 require "fixtures/crossing_test"
 require "fixtures/unsafe_test"
 require "fixtures/masked_test"
+require "fixtures/casualty_test"
 
 class TestExecutor < Minitest::Test
   def setup
@@ -155,6 +156,41 @@ class TestExecutor < Minitest::Test
     assert_kind_of ::Ractor::IsolationError, cause, "the cause chain should survive the Port"
     refute_empty Array(cause.backtrace), "a cause with no backtrace cannot be located"
     assert_includes cause.backtrace.join("\n"), "masked_test.rb"
+  end
+
+  # Minitest re-raises PASSTHROUGH_EXCEPTIONS instead of recording them, so they escape #run and
+  # used to kill the worker outright. The result was never sent, and shutdown waited on
+  # @outstanding for a result that could never arrive — the pool hung forever. Measured in
+  # probes/worker_death.rb, which sat there until this was fixed.
+  #
+  # A hang is the worst failure available: CI kills it an hour later with no output, so nobody
+  # even learns which test did it. An error recorded against the test that caused it is worth
+  # far more.
+  def test_an_exception_that_escapes_a_test_does_not_take_the_worker_with_it
+    run_jobs %w[test_kills_its_worker], klass: CasualtyFixture
+
+    result = @reporter.recorded.first.result
+
+    assert_equal "E", result.result_code
+    assert_match(/NoMemoryError|out of memory/, result.failures.first.message)
+  end
+
+  # Surviving is not enough — the pool has to keep working afterwards.
+  def test_the_pool_keeps_working_after_a_test_kills_its_worker
+    run_jobs %w[test_kills_its_worker test_is_perfectly_fine], klass: CasualtyFixture
+
+    codes = @reporter.recorded.to_h { |call| [call.name, call.result.result_code] }
+
+    assert_equal({ "test_kills_its_worker" => "E", "test_is_perfectly_fine" => "." }, codes)
+  end
+
+  # The pre-flight and post-flight checks both assume shutdown is reached even when the executor
+  # was handed nothing at all, so that assumption is worth a test of its own.
+  def test_starting_and_shutting_down_with_no_work_is_harmless
+    @executor.start
+
+    assert_same @executor, @executor.shutdown
+    assert_empty @reporter.recorded
   end
 
   def test_the_pool_survives_shared_mutable_state_and_keeps_working

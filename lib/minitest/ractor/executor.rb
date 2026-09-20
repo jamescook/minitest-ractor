@@ -42,6 +42,33 @@ module Minitest
       #
       # A class method rather than an instance one because a worker has to call it too, and a
       # worker cannot reach the executor object — only shareable things, which a class is.
+      # Runs one test and always comes back with a Result, whatever the test does.
+      #
+      # WITHOUT THIS THE POOL HANGS, and a hang is the worst outcome available: CI kills it an
+      # hour later with no output at all. Minitest re-raises PASSTHROUGH_EXCEPTIONS —
+      # NoMemoryError, SignalException, Interrupt, SystemExit — instead of recording them, so
+      # they come straight out of #run, kill the worker, and the result is never sent. The main
+      # Ractor then waits on @outstanding for a result that can never arrive. Measured in
+      # probes/worker_death.rb, which hung until this existed.
+      #
+      # So anything that escapes is recorded against the test it escaped from and the worker
+      # carries on. That is a deliberate narrowing of Minitest's behaviour: an `exit` inside a
+      # test stops a normal run and here becomes an error on that one test. Losing the whole
+      # run's output to a deadlock is worse than reporting an unusual error accurately.
+      #
+      # A class method because a worker has to call it and a worker cannot reach the executor
+      # object — only shareable things, which a class is.
+      def self.result_for(klass, method_name)
+        instance = klass.new method_name
+
+        begin
+          instance.run
+        rescue Exception => e # rubocop:disable Lint/RescueException
+          instance.failures << ::Minitest::UnexpectedError.new(e)
+          ::Minitest::Result.from instance
+        end
+      end
+
       def start
         ShareableConstants.apply!
 
@@ -82,7 +109,7 @@ module Minitest
         ::Ractor.new(@results, id) do |home, me|
           while (job = ::Ractor.receive)
             klass, method_name = job
-            result = klass.new(method_name).run
+            result = Executor.result_for klass, method_name
 
             # Minitest keeps a metadata hash on a Result for exactly this: plain data attached
             # in passing that reaches the reporter intact. Marshal-able only, which an Integer
