@@ -98,6 +98,31 @@ class TestExecutor < Minitest::Test
     end
   end
 
+  # A Ractor::Port empties the backtrace of an exception nested in an object graph — the same
+  # failure keeps its frames across Ractor#value and loses them across a Port. The executor has
+  # no choice about the Port, so the frames have to be lifted out inside the worker and put back
+  # on arrival. An inventory that cannot name a file is most of the way to useless.
+  def test_a_failure_arrives_with_a_backtrace_naming_the_line
+    run_jobs %w[test_reads_a_class_level_ivar], klass: UnsafeFixture
+
+    failure = @reporter.recorded.first.result.failures.first
+
+    refute_empty Array(failure.backtrace), "a failure with no backtrace cannot be located"
+    assert_includes failure.backtrace.join("\n"), "unsafe_test.rb"
+  end
+
+  # Asserted on the whole backtrace rather than its first frame: an assertion failure is raised
+  # inside Minitest::Assertions#assert, so the test's own file is several frames down. Minitest
+  # normally trims those with backtrace_filter, which does not survive a worker either.
+  def test_an_ordinary_assertion_failure_also_keeps_its_backtrace
+    run_jobs %w[test_fails]
+
+    failure = @reporter.recorded.first.result.failures.first
+
+    refute_empty Array(failure.backtrace)
+    assert_includes failure.backtrace.join("\n"), "crossing_test.rb"
+  end
+
   def test_the_pool_survives_shared_mutable_state_and_keeps_working
     @executor.start
     @executor << [UnsafeFixture, "test_reads_a_class_level_ivar", @reporter]

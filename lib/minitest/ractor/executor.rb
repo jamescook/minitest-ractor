@@ -35,6 +35,16 @@ module Minitest
         Etc.nprocessors
       end
 
+      # Where a failure's backtrace actually lives. Minitest wraps anything that is not an
+      # assertion in UnexpectedError, which delegates #backtrace to the error it holds, so
+      # setting frames on the wrapper would not stick.
+      #
+      # A class method rather than an instance one because a worker has to call it too, and a
+      # worker cannot reach the executor object — only shareable things, which a class is.
+      def self.backtrace_holder(failure)
+        failure.respond_to?(:error) ? failure.error : failure
+      end
+
       def start
         ShareableConstants.apply!
 
@@ -82,6 +92,18 @@ module Minitest
             # is, and which is the same constraint as crossing back out of a Ractor.
             result.metadata[:minitest_ractor_worker] = me
 
+            # A Ractor::Port empties the backtrace of an exception nested in an object graph.
+            # Not Ractor copying in general — the same failure keeps its frames across
+            # Ractor#value — and not Minitest sanitising it either, since the frames are still
+            # here. It is the Port, it happens silently, and the executor cannot use anything
+            # else: one legal reader per port is what lets the main Ractor collect from every
+            # worker at once.
+            #
+            # So lift the frames out here, where they still exist, and carry them as plain data.
+            # An Array of Strings crosses a Port perfectly well.
+            result.metadata[:minitest_ractor_backtraces] =
+              result.failures.map { |failure| Array(Executor.backtrace_holder(failure).backtrace) }
+
             home.send [me, result]
           end
         end
@@ -93,7 +115,21 @@ module Minitest
         id, result = @results.receive
         @outstanding -= 1
         @idle << id
+        restore_backtraces result
         @pending.delete(id).record result
+      end
+
+      # Put the frames back on the exceptions themselves, rather than leaving them in metadata
+      # for a reporter to know about. Every reporter, formatter and plugin downstream already
+      # reads #backtrace; a result that has been through a worker should be indistinguishable
+      # from one that has not.
+      def restore_backtraces(result)
+        carried = result.metadata.delete :minitest_ractor_backtraces
+        return unless carried
+
+        result.failures.zip(carried) do |failure, frames|
+          self.class.backtrace_holder(failure).set_backtrace frames if frames
+        end
       end
     end
   end
