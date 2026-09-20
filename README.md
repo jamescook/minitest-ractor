@@ -126,14 +126,53 @@ could do — indistinguishable from success, and nobody ever finds out. Both are
 
 `MT_RACTOR=0`, `false`, `no` and empty all mean no.
 
+## Where this fits
+
+Built for **one machine with a lot of cores** — a laptop or a workstation, where twelve
+processors sit mostly idle while Minitest's threads take turns. It runs in a single process and
+does not spread work across machines.
+
+If what you want is a suite split across CI workers, that is a different problem, and
+[Shopify's ci-queue](https://github.com/Shopify/ci-queue) is the thing to look at. It
+distributes tests over many workers using a queue, typically Redis-backed, handing work out as
+each worker comes free rather than pre-splitting it, and re-queueing the tests of a worker that
+dies. It ships a `minitest-queue` runner, so it fits a Minitest suite directly.
+
+The two are not alternatives and do not compete. ci-queue spreads a suite over machines to
+finish sooner; this proves the code those tests reached holds no shared mutable state. Running
+ci-queue in CI and this on a laptop is a perfectly sensible arrangement.
+
+## Speed
+
+It is not what this is for, but it is usually faster, and the numbers are worth being precise
+about rather than vague.
+
+`benchmark/run.rb` builds a dummy suite and runs the whole thing through each executor in turn.
+It checks that every mode passes every test before it times anything, because a mode that fails
+fast looks wonderful on a benchmark.
+
+405 tests, CPU-bound, five of them sleeping:
+
+| | iterations/sec | |
+|---|---|---|
+| serial | 2.5 | |
+| threads (12) | 2.6 | 1.05× over serial |
+| **ractors (12)** | **18.9** | **7.16× over threads** |
+
+**On this machine**: Apple M2 Max, 12 cores (8 performance, 4 efficiency), 32 GB, macOS 26.5.2,
+Ruby 4.0.7. Yours will differ, and so will the same machine under load — an earlier run while
+the box was busy gave 4.06× rather than 7.16×. Re-run it rather than trusting anything here.
+
+The number to notice is not really ours: it is that **threads bought 1.05×** across twelve
+cores. That is the ceiling on CPU-bound Ruby in one process, and it is why the pool looks good
+here. An IO-bound suite would not show this at all, since threads wait perfectly well. No
+comparison against a fork-based runner has been made.
+
 ## Non-goals
 
-- **Not tuned for speed.** It may well be faster: measured here at 6.3× against threads on
-  CPU-bound Ruby, where threads gave 1.0×. But that is a side effect, it will not hold for
-  IO-bound suites, and no comparison against a fork-based runner has been made. Use this for the
-  inventory.
+- **Not tuned for speed**, though it is usually faster. See *Speed* below.
 - **Minitest only.** Not RSpec.
-- **Not distributed.** One machine, one process.
+- **Not distributed.** One machine, one process. See *Where this fits* above.
 - **Not a general Ractor toolkit.** The parts here exist to run tests and explain refusals.
 
 ## Requirements
