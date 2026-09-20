@@ -69,6 +69,62 @@ module Minitest
         end
       end
 
+      # Gets a result home, whatever it is carrying.
+      #
+      # A Ractor::Port COPIES what it sends, and not everything can be copied. Exceptions are
+      # already safe without us: Ruby neuters one it cannot copy, and it arrives as a plain
+      # RuntimeError reading "Neutered Exception <OriginalClass>: <message>" with its instance
+      # variables dropped. So a test raising something exotic costs a little detail and nothing
+      # else.
+      #
+      # METADATA IS THE HOLE. Minitest documents it as "plain (read: marshal-able) data", but
+      # that is a docstring, not a check, and a Result holding a Proc there is an ordinary object
+      # graph rather than an exception — so it is not neutered, the send raises "allocator
+      # undefined for Proc", the worker dies with its job still outstanding, and shutdown waits
+      # for a result that can never arrive. Measured in probes/unsendable_failure.rb.
+      #
+      # So: try it, then try again without the metadata this gem did not put there, and failing
+      # that send a result that says what happened. Losing one test's metadata is a small price;
+      # losing the run to a deadlock is not.
+      # Nested rather than two rescue clauses on one begin: a raise inside a rescue body
+      # propagates, it does not fall through to the next clause.
+      def self.deliver(result, home:, worker:, job:)
+        home.send [worker, result]
+      rescue StandardError => e
+        begin
+          home.send [worker, stamp(without_foreign_metadata(result), worker)]
+        rescue StandardError
+          home.send [worker, stamp(undeliverable(job, e), worker)]
+        end
+      end
+
+      def self.stamp(result, worker)
+        result.metadata[:minitest_ractor_worker] = worker
+        result
+      end
+
+      # Keeps only what the executor itself attached, which is an Integer and Arrays of Strings
+      # and therefore always sendable.
+      def self.without_foreign_metadata(result)
+        carried = result.metadata.slice :minitest_ractor_worker, :minitest_ractor_backtraces
+        result.metadata.clear
+        result.metadata.merge! carried
+        result
+      end
+
+      # Last resort: a result that carries nothing but the news. Recorded against the test it
+      # came from, so the inventory still names something a person can go and look at.
+      def self.undeliverable(job, error)
+        klass, method_name = job
+        instance = klass.new method_name
+        trouble  = RuntimeError.new "its result could not be sent from the worker that ran it " \
+                                    "(#{error.class}: #{error.message.to_s.lines.first.to_s.strip})"
+        trouble.set_backtrace []
+        instance.failures << ::Minitest::UnexpectedError.new(trouble)
+
+        ::Minitest::Result.from instance
+      end
+
       def start
         ShareableConstants.apply!
 
@@ -135,7 +191,7 @@ module Minitest
                 ErrorChain.of(failure).map { |error| Array(error.backtrace) }
               end
 
-            home.send [me, result]
+            Executor.deliver result, home:, worker: me, job:
           end
         end
       end

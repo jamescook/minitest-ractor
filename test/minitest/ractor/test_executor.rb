@@ -7,6 +7,7 @@ require "fixtures/crossing_test"
 require "fixtures/unsafe_test"
 require "fixtures/masked_test"
 require "fixtures/casualty_test"
+require "fixtures/unsendable_test"
 
 class TestExecutor < Minitest::Test
   def setup
@@ -182,6 +183,49 @@ class TestExecutor < Minitest::Test
     codes = @reporter.recorded.to_h { |call| [call.name, call.result.result_code] }
 
     assert_equal({ "test_kills_its_worker" => "E", "test_is_perfectly_fine" => "." }, codes)
+  end
+
+  # A Port copies what it sends, and a Proc cannot be copied — "allocator undefined for Proc".
+  # Minitest documents metadata as plain marshal-able data, but that is a docstring rather than
+  # a check, so a result can arrive at the send carrying something that will not go. The worker
+  # used to die there with its job still outstanding, and shutdown waited forever.
+  #
+  # Only the foreign metadata is dropped, so the test's actual verdict still gets home. Measured
+  # in probes/unsendable_failure.rb, which hung before this.
+  def test_a_result_carrying_something_unsendable_still_arrives
+    run_jobs %w[test_puts_a_proc_in_its_metadata], klass: UnsendableFixture
+
+    result = @reporter.recorded.first.result
+
+    assert_equal ".", result.result_code, "the verdict survives even though the metadata did not"
+    refute_includes result.metadata.keys, :a_proc
+  end
+
+  # The worker stamp has to survive that retry, or a test whose metadata could not be sent would
+  # look like one that never reached a Ractor — and enough of those turn a real run into a
+  # "NO PROOF" report.
+  def test_a_retried_result_still_says_which_worker_ran_it
+    run_jobs %w[test_puts_a_proc_in_its_metadata], klass: UnsendableFixture
+
+    refute_nil @reporter.recorded.first.result.metadata[:minitest_ractor_worker]
+  end
+
+  # Exceptions need no help from us: Ruby neuters one it cannot copy rather than refusing to
+  # send it. Worth pinning down, because it is the reason this fix is about metadata and not
+  # about failures, which is the opposite of what it looks like from the outside.
+  def test_an_exception_ruby_cannot_copy_is_neutered_rather_than_lost
+    run_jobs %w[test_raises_something_holding_a_proc], klass: UnsendableFixture
+
+    result = @reporter.recorded.first.result
+
+    assert_equal "E", result.result_code
+    assert_match(/Neutered Exception.*CarriesAProc/, result.failures.first.message)
+  end
+
+  def test_the_pool_keeps_working_after_a_result_that_would_not_send
+    run_jobs %w[test_puts_a_proc_in_its_metadata test_is_perfectly_fine], klass: UnsendableFixture
+
+    assert_equal(%w[. .], @reporter.recorded.map { |call| call.result.result_code })
   end
 
   # The pre-flight and post-flight checks both assume shutdown is reached even when the executor
