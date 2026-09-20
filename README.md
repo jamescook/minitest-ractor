@@ -104,6 +104,72 @@ holding a *shareable* value can be read from a worker perfectly well, so `Ractor
 is a genuine one-line fix there. A class variable or a global is refused even when its value is
 shareable, so the same advice would send you to freeze something that was never going to help.
 
+## Fixing what it finds
+
+Findings sort into three tiers, and the tier matters more than the count. Everything below was
+measured on Ruby 4.0.7 by `probes/escape_hatches.rb`.
+
+### Yours to fix
+
+Your own memoised variables, constants and globals. The report names them and says what to do.
+The one that surprises people: a class or module instance variable holding a **shareable** value
+can be read from a worker perfectly well, so memoising is not itself the problem — `@thing =
+Ractor.make_shareable(...)` at load time is usually the whole fix. A class variable or a global
+is refused even when its value is shareable, so those have to go rather than be frozen.
+
+Where you need a genuine per-process cache, Ruby has a legal replacement for `@thing ||=`:
+
+```ruby
+def self.index
+  Ractor.store_if_absent(:index) { build_index }   # per-Ractor, so nothing is shared
+end
+```
+
+Storage is **per worker**, not per process, so the block runs once in each. That suits a cache
+and not an expensive one-time build — across twelve workers you pay for it twelve times.
+
+For methods built with `define_method`, whose blocks are Procs and are refused, either use
+`Ractor.shareable_proc` or generate real methods with a string `class_eval`. Both work.
+
+### Somebody else's, but you can work around it
+
+A constant in a gem or in the standard library that holds something unshareable —
+`RbConfig::CONFIG` is the one most suites will hit. Take a snapshot into a constant of your own:
+
+```ruby
+RBCONFIG = Ractor.make_shareable(RbConfig::CONFIG, copy: true)
+```
+
+**`copy: true` is the load-bearing part.** Without it `make_shareable` freezes in place, and you
+would be freezing RbConfig's strings process-wide on behalf of every other library in the
+application. With it, the original is left alone — verified: after taking the snapshot above,
+`RbConfig::CONFIG` is still unfrozen and so are its values.
+
+### Nobody can fix from Ruby
+
+- **A C extension that never declared itself Ractor-safe.** Extensions are shut out of Ractors
+  by default, and an author opts in by calling `rb_ext_ractor_safe(true)` in the extension's
+  `Init_` function, which makes subsequent `rb_define_method` definitions callable from a Ractor.
+  It is an assertion by the author rather than something Ruby checks. Most of the standard
+  library has done it — Digest, Zlib, StringIO, Socket, JSON, Date and Etc all work from a
+  worker — while Ripper and Fiddle do not. There is no flag you can set from Ruby.
+- **A class variable in somebody else's code.** `Minitest::Runnable`'s own `@@runnables` is an
+  example. Refused even when shareable, and not yours to change.
+
+The only escape is to not make the call from a worker: do the work in the main Ractor before the
+run, or have the worker ask for it and wait.
+
+```ruby
+worker = Ractor.new(requests) do |to_main|
+  to_main.send [:parse, source]
+  Ractor.receive                # the answer comes back through the worker's OWN inbox
+end
+```
+
+The reply cannot come back through a second `Ractor::Port` created by the main Ractor: a port
+has exactly one legal reader, its creator. And the call is no longer parallel, which is the
+price of the hatch.
+
 ## When it refuses to run
 
 Two situations produce a green suite that proved nothing, which is the worst thing this tool
