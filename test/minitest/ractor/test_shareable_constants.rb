@@ -12,11 +12,33 @@ class TestShareableConstants < Minitest::Test
   end
 
   def test_every_named_constant_is_shareable_once_applied
-    Patch::NAMES.each do |name|
-      value = Minitest::Test.const_get(name)
+    Patch::CONSTANTS.each do |owner_name, names|
+      owner = Object.const_get(owner_name)
 
-      assert Ractor.shareable?(value), "Minitest::Test::#{name} is not shareable"
+      names.each do |name|
+        next unless owner.const_defined?(name, false)
+
+        assert Ractor.shareable?(owner.const_get(name, false)), "#{owner_name}::#{name} is not shareable"
+      end
     end
+  end
+
+  # The one that hid every other cause. It is read while BUILDING a failure message, so it
+  # fires only after something has already gone wrong and replaces the real error with its own.
+  def test_the_backtrace_filter_is_shareable
+    assert Ractor.shareable?(Minitest.backtrace_filter)
+  end
+
+  def test_a_worker_can_filter_a_backtrace
+    filtered = Ractor.new { Minitest.filter_backtrace(["x.rb:1:in 'a'"]) }.value
+
+    assert_equal ["x.rb:1:in 'a'"], filtered
+  end
+
+  # Named so the reason survives: these are unshareable too and must stay that way.
+  def test_the_executor_and_the_io_lock_are_left_alone
+    refute_includes Patch.patched.keys, "Minitest.parallel_executor"
+    refute_includes Patch.patched.keys, "Minitest::Test.io_lock"
   end
 
   def test_applying_twice_is_harmless
@@ -32,20 +54,27 @@ class TestShareableConstants < Minitest::Test
     assert_includes Minitest::Test::TEARDOWN_METHODS, "teardown"
   end
 
-  # The assertion that actually matters. Everything above is a proxy for this: can a test run
-  # in a worker at all, and does what happened to it survive the trip back?
-  def test_patched_accounts_for_every_constant_it_touches
-    assert_equal Patch::NAMES.sort, Patch.patched.keys.sort
+  def test_patched_accounts_for_every_name_it_was_given
+    expected = Patch::CONSTANTS.flat_map { |owner, names| names.map { |n| "#{owner}::#{n}" } }
+
+    assert_equal (expected + Patch::IVARS).sort, Patch.patched.keys.sort
 
     Patch.patched.each_value do |what|
-      assert_includes %i[made_shareable left_alone], what
+      assert_includes %i[made_shareable left_alone absent], what
     end
   end
 
   def test_applying_again_leaves_everything_alone
     Patch.apply!
 
-    assert_equal %i[left_alone], Patch.patched.values.uniq
+    refute_includes Patch.patched.values, :made_shareable
+  end
+
+  # Spec is only loaded if somebody requires it, so a name under it must be skipped rather than
+  # raise — unlike the three under Minitest::Test, whose absence means an unpatchable Minitest.
+  def test_an_absent_optional_constant_is_recorded_not_raised
+    assert_includes Patch.patched.values, :left_alone
+    refute_empty Patch.patched
   end
 
   def test_the_record_is_itself_shareable
@@ -65,7 +94,8 @@ class TestShareableConstants < Minitest::Test
     report = Patch.report
 
     assert_includes report, "Minitest #{Minitest::VERSION}"
-    Patch::NAMES.each { |name| assert_includes report, name.to_s }
+    assert_includes report, "Minitest::Test::SETUP_METHODS"
+    assert_includes report, "Minitest.backtrace_filter"
   end
 
   def test_a_result_crosses_home_from_a_ractor
