@@ -44,6 +44,11 @@ module Minitest
 
   def self.plugin_ractor_init(options) # :nodoc:
     Minitest::Ractor::Plugin.init options
+  rescue Minitest::Ractor::ProofNotAttempted => e
+    # Raised rather than printed, so that anything driving this as a library can catch it. But a
+    # person who has just mistyped a command wants a sentence, not forty frames of minitest
+    # internals with the sentence at the top, so at the edge it becomes an ordinary refusal.
+    abort "minitest-ractor: #{e.message}"
   end
 end
 

@@ -131,6 +131,30 @@ class TestInventory < Minitest::Test
     assert_includes report, "parallelize_me!", "and it has to say what is missing"
   end
 
+  # Coverage is the scope of the proof, so it is printed as a number every run rather than left
+  # as a sentence of prose in the README.
+  def test_the_report_says_how_much_of_the_suite_reached_a_ractor
+    report = report_for UnsafeFixture, %w[test_reads_a_class_level_ivar test_also_reads_it]
+
+    assert_includes report, "2 of 2 tests ran in Ractors"
+  end
+
+  def test_a_green_report_says_it_too
+    assert_includes report_for(CrossingFixture, %w[test_passes]), "1 of 1 test ran in Ractors"
+  end
+
+  # A suite of mixed parallel and serial classes is legitimate, so partial coverage is stated as
+  # the honest scope of the proof and NOT as a warning or a shortfall.
+  def test_partial_coverage_is_reported_as_scope_rather_than_as_a_problem
+    mixed = results_for(CrossingFixture, %w[test_passes]) + [CrossingFixture.new("test_passes").run]
+
+    report = Inventory.from(mixed).to_s
+
+    assert_includes report, "1 of 2 tests ran in Ractors"
+    assert_includes report, "says nothing about the rest"
+    refute_match(/warning|should|must|failed to/i, report.lines.grep(/ran in Ractors/).join)
+  end
+
   def test_it_counts_how_many_tests_actually_reached_a_worker
     through_the_pool = results_for CrossingFixture, %w[test_passes]
     at_home          = [CrossingFixture.new("test_passes").run]

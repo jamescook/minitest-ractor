@@ -73,6 +73,14 @@ module Minitest
         @findings.empty?
       end
 
+      # Tests ran and none of them left the main Ractor, so nothing here was checked for
+      # isolation. Distinct from a green run in the only way that matters, and the reason the
+      # reporter fails the build: a proof that was never attempted must not read as one that
+      # succeeded.
+      def proved_nothing?
+        @reached_workers.zero? && @total.positive?
+      end
+
       def to_s
         return nothing_found if empty?
 
@@ -146,9 +154,23 @@ module Minitest
 
       def preamble
         ["",
+         *coverage,
+         "",
          *wrap("Every finding below is Ruby refusing a worker access to state another Ractor " \
                "can see. They are grouped by cause, because the cause is what you fix: one " \
                "cause is one change, however many tests tripped over it.", WIDTH)]
+      end
+
+      # Printed every run, because it IS the scope of the proof. A suite of mixed parallel and
+      # serial classes is perfectly legitimate, so a partial number is not a shortfall to
+      # apologise for — it is the honest answer to "what did this cover", which until now was a
+      # limitation stated in prose and never in figures.
+      def coverage(clause = nil)
+        line = "#{@reached_workers} of #{count(@total, 'test')} ran in Ractors#{clause}."
+        return wrap(line, WIDTH) if @reached_workers == @total
+
+        wrap("#{line} The proof covers those #{@reached_workers} and says nothing about the " \
+             "rest, which ran in the main Ractor.", WIDTH)
       end
 
       # The rest, one line each, rather than a count of things withheld.
@@ -194,12 +216,11 @@ module Minitest
       # A green run is the product, so it is worth saying properly — including the limit, which
       # is the part people drop when they repeat it.
       def nothing_found
-        return nothing_attempted if @reached_workers.zero? && @total.positive?
+        return nothing_attempted if proved_nothing?
 
         [*heading("no findings"),
          "",
-         *wrap("#{count(@reached_workers, 'test')} ran in workers and none of them reached " \
-               "shared mutable state.", WIDTH),
+         *coverage(", and none of them reached shared mutable state"),
          "",
          *wrap("The proof is narrow on purpose. It covers the code THESE TESTS REACHED and says " \
                "nothing about code they did not.", WIDTH),

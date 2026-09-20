@@ -32,6 +32,20 @@ module Minitest
         @io.puts inventory.to_s
       end
 
+      # POST-FLIGHT, and the last word on whether a proof was attempted.
+      #
+      # Pre-flight can be fooled: an executor replaced after init_plugins, a filter that selects
+      # only serial classes, a cause nobody has thought of. This looks at what actually happened
+      # instead — every result the executor produced carries the worker that ran it — so it
+      # catches reasons that were never enumerated.
+      #
+      # Minitest ANDs passed? across every reporter, so returning false is what makes the run
+      # exit non-zero. It judges ONLY whether anything reached a Ractor: failing tests are
+      # minitest's business and already counted, and counting them here would count them twice.
+      def passed?
+        !inventory.proved_nothing?
+      end
+
       def inventory
         Inventory.from @results, limit: @limit
       end

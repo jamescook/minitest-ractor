@@ -13,8 +13,9 @@ require "open3"
 # whole of how a plugin gets registered: load_plugins is no longer called for you, so there is no
 # discovery to simulate. What these exercise is the real path a user takes.
 class TestPluginIntegration < Minitest::Test
-  FIXTURE = File.expand_path "../../fixtures/plugin_suite.rb", __dir__
-  LIB     = File.expand_path "../../../lib", __dir__
+  FIXTURE        = File.expand_path "../../fixtures/plugin_suite.rb", __dir__
+  UNPARALLELISED = File.expand_path "../../fixtures/unparallelised_suite.rb", __dir__
+  LIB            = File.expand_path "../../../lib", __dir__
 
   # The parent process may have any of these set; a test about environment variables cannot
   # inherit an environment. Nil tells Open3 to unset.
@@ -71,7 +72,8 @@ class TestPluginIntegration < Minitest::Test
     output, status = run_suite env: { "MT_CPU" => "1" }, args: ["--ractor"]
 
     refute_predicate status, :success?, "a proof that cannot be attempted must not exit green"
-    assert_includes output, "ProofNotAttempted"
+    assert_includes output, "minitest-ractor:"
+    refute_includes output, "plugin.rb:", "a mistyped command deserves a sentence, not a backtrace"
     assert_includes output, "MT_RACTOR=1", "the error has to name the fix"
     assert_empty workers_in(output), "and no test should have run at all"
   end
@@ -106,6 +108,29 @@ class TestPluginIntegration < Minitest::Test
     assert_predicate status, :success?, output
     assert_equal %w[main main], workers_in(output)
     assert_includes output, "2 runs", "both tests still have to run"
+  end
+
+  # PRE-FLIGHT, end to end. By init_plugins every class is loaded and its run_order is settled,
+  # so a suite that cannot possibly reach a Ractor is refused before a single test runs — in
+  # milliseconds, rather than after ten minutes of proving nothing.
+  def test_a_suite_that_cannot_reach_a_ractor_is_refused_before_it_runs
+    output, status = Open3.capture2e BASE_ENV, RbConfig.ruby, "-W0", "-I#{LIB}",
+                                     UNPARALLELISED, "--ractor"
+
+    refute_predicate status, :success?
+    assert_includes output, "minitest-ractor:"
+    refute_includes output, "plugin.rb:", "a mistyped command deserves a sentence, not a backtrace"
+    assert_includes output, "parallelize_me!", "it has to name the likely reason"
+    refute_includes output, "RAN:", "and no test should have run at all"
+  end
+
+  # The same suite is left alone when nobody asked for Ractors. Pre-flight is not a general
+  # opinion about how people should write tests.
+  def test_a_suite_that_cannot_reach_a_ractor_is_fine_if_it_never_asked
+    output, status = Open3.capture2e BASE_ENV, RbConfig.ruby, "-W0", "-I#{LIB}", UNPARALLELISED
+
+    assert_predicate status, :success?, output
+    assert_includes output, "RAN: test_one"
   end
 
   def test_the_pool_size_can_be_set_from_the_environment

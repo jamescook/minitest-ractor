@@ -44,7 +44,8 @@ module Minitest
       # Late enough that --ractor is finally visible, and still early enough to catch every job:
       # parallelize_me! only installs Parallel::Test::ClassMethods, whose run reads
       # Minitest.parallel_executor at DISPATCH time rather than remembering one.
-      def self.init(options, env = ENV, reporter: ::Minitest.reporter)
+      def self.init(options, env = ENV, reporter: ::Minitest.reporter,
+                    runnables: ::Minitest::Runnable.runnables)
         if declined? options
           restore_thread_executor env if ractor_pool_installed?
           return :declined
@@ -52,11 +53,35 @@ module Minitest
 
         return :not_asked unless asked_for? options, env
 
-        unreachable!(env) unless reachable? env
-
         ::Minitest.parallel_executor = Executor.new workers(env) unless ractor_pool_installed?
+        preflight! runnables, env
         install_reporter reporter, options
         :installed
+      end
+
+      # Refuses to start a run that cannot possibly prove anything, and returns how many tests
+      # can. Costs milliseconds; the alternative is a ten-minute suite that reports success
+      # without going near a Ractor.
+      #
+      # DELIBERATELY DOES NOT CARE WHY. Minitest routes a class through the parallel executor
+      # only once its run_order is :parallel, and the ways that can fail to happen are open-ended
+      # — MT_CPU=1, no parallelize_me!, another plugin replacing the executor, a class marked
+      # order-dependent. Enumerating them is a losing game, so this asks the one question that
+      # matters and guesses at the reason only for the error message.
+      #
+      # A PARTIAL NUMBER IS NOT A WARNING. A suite of mixed parallel and serial classes is
+      # perfectly legitimate, and the count is the honest scope of the proof rather than a
+      # shortfall. Only zero is an error.
+      def self.preflight!(runnables, env = ENV)
+        covered = runnables.select do |runnable|
+          runnable.respond_to?(:run_order) && runnable.run_order == :parallel &&
+            !runnable.runnable_methods.empty?
+        end
+
+        count = covered.sum { |runnable| runnable.runnable_methods.size }
+        return count if count.positive?
+
+        raise ProofNotAttempted, nothing_can_reach_a_ractor(env)
       end
 
       # Idempotent, and by checking rather than by remembering. A gem that demands the code under
@@ -118,39 +143,41 @@ module Minitest
         count.positive? ? count : Executor.default_size
       end
 
-      # Whether a Ractor can still be reached by the time init runs.
-      #
-      # Under MT_CPU=1 minitest builds no default executor at all ("if n_threads > 1"), so
-      # parallelize_me! hit "return unless Minitest.parallel_executor" and did nothing — no
-      # ClassMethods, no parallel run_order. Swapping the executor now changes nothing, because
-      # there is no longer anything that would ask for it.
-      def self.reachable?(env = ENV)
-        threads = env[THREADS]
-
-        threads.nil? || threads.to_i > 1 || ractor_pool_installed?
-      end
-
       # THE ONE CASE WHERE FAILING LOUDLY IS THE ENTIRE POINT.
       #
-      # Left alone, this combination runs the suite in the main Ractor and reports a cheerful
+      # Left alone, a run like this passes the suite in the main Ractor and reports a cheerful
       # "0 failures" — a green run claiming an isolation proof that was never attempted, which is
       # indistinguishable from success and worse than any crash.
-      def self.unreachable!(env = ENV)
-        raise ProofNotAttempted, <<~MESSAGE
-          #{THREADS}=#{env[THREADS]} switched minitest's parallel executor off before your test
-          files loaded, so parallelize_me! did nothing and no test will go near a Ractor. Asking
-          for --ractor now cannot undo that: the classes never became parallel, and there is
-          nothing left to redirect.
+      #
+      # The reason is a guess, and the message says which guess it made.
+      def self.nothing_can_reach_a_ractor(env)
+        threads = env[THREADS]
 
-          Use the environment variable instead, which is read early enough to get in front of it:
+        reason = if threads && threads.to_i <= 1
+                   <<~CPU
+                     #{THREADS}=#{threads} switched minitest's parallel executor off before your
+                     test files loaded, so parallelize_me! found nothing to register with and did
+                     nothing. Asking for --ractor afterwards cannot undo that. Use the environment
+                     variable, which is read early enough to get in front of it:
 
-              #{THREADS}=#{env[THREADS]} #{OPT_IN}=1 <your test command>
+                         #{THREADS}=#{threads} #{OPT_IN}=1 <your test command>
+                   CPU
+                 else
+                   <<~PARALLELIZE
+                     No test class has a parallel run order, which usually means none of them
+                     calls parallelize_me!. Minitest hands a class to the parallel executor only
+                     once it has:
 
-          Refusing to run rather than report a passing suite that proved nothing.
-        MESSAGE
+                         class Minitest::Test
+                           parallelize_me!
+                         end
+                   PARALLELIZE
+                 end
+
+        "#{reason}\nRefusing to run rather than report a passing suite that proved nothing."
       end
 
-      private_class_method :truthy?, :unreachable!
+      private_class_method :truthy?, :nothing_can_reach_a_ractor
     end
   end
 end

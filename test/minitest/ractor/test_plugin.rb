@@ -86,14 +86,15 @@ class TestPlugin < Minitest::Test
     Plugin.install_at_load({ "MT_RACTOR" => "1" })
 
     assert_equal :installed, Plugin.init({ ractor: true }, { "MT_CPU" => "1", "MT_RACTOR" => "1" },
-                                         reporter: nil)
+                                         reporter: nil, runnables: [parallel_runnable])
   end
 
   def test_the_flag_installs_the_pool_and_a_reporter
     Minitest.parallel_executor = nil
     reporter = Minitest::CompositeReporter.new
 
-    assert_equal :installed, Plugin.init({ ractor: true, io: StringIO.new }, {}, reporter:)
+    assert_equal :installed, Plugin.init({ ractor: true, io: StringIO.new }, {}, reporter:,
+                                                                                 runnables: [parallel_runnable])
     assert_kind_of Minitest::Ractor::Executor, Minitest.parallel_executor
     assert reporter.reporters.any?(Minitest::Ractor::Reporter)
   end
@@ -125,6 +126,64 @@ class TestPlugin < Minitest::Test
 
     assert_equal :declined, Plugin.init({ ractor: false }, {}, reporter: nil)
     assert_nil Minitest.parallel_executor
+  end
+
+  # Stands in for a test class. Only the two things pre-flight asks about.
+  Runnable = Struct.new(:run_order, :runnable_methods)
+
+  def parallel_runnable(tests: %w[test_a])
+    Runnable.new(:parallel, tests)
+  end
+
+  def serial_runnable(tests: %w[test_a])
+    Runnable.new(:random, tests)
+  end
+
+  # PRE-FLIGHT. By init_plugins every test class is loaded and its run_order is settled, so
+  # whether anything can reach a Ractor is knowable in milliseconds rather than after a
+  # ten-minute suite that proves nothing.
+  def test_preflight_counts_the_tests_that_can_reach_a_ractor
+    assert_equal 2, Plugin.preflight!([parallel_runnable(tests: %w[test_a test_b]),
+                                       serial_runnable], {})
+  end
+
+  # A suite of mixed parallel and serial classes is legitimate. A partial number is the truth
+  # about what was proved, not a warning.
+  def test_preflight_is_happy_with_a_partly_parallel_suite
+    assert_equal 1, Plugin.preflight!([parallel_runnable, serial_runnable, serial_runnable], {})
+  end
+
+  def test_preflight_refuses_a_suite_where_nothing_is_parallel
+    error = assert_raises Minitest::Ractor::ProofNotAttempted do
+      Plugin.preflight!([serial_runnable, serial_runnable], {})
+    end
+
+    assert_match(/parallelize_me!/, error.message, "it has to name the likely reason")
+  end
+
+  # The check does not care WHY nothing is parallel — enumerating the causes is a losing game —
+  # but it should still point at the likeliest one, and MT_CPU=1 is a different fix.
+  def test_preflight_blames_mt_cpu_when_that_is_the_likely_reason
+    error = assert_raises Minitest::Ractor::ProofNotAttempted do
+      Plugin.preflight!([serial_runnable], { "MT_CPU" => "1" })
+    end
+
+    assert_match(/MT_RACTOR=1/, error.message)
+  end
+
+  # A class with no tests in it cannot reach a Ractor however it is marked.
+  def test_preflight_ignores_parallel_classes_with_no_tests
+    assert_raises Minitest::Ractor::ProofNotAttempted do
+      Plugin.preflight!([parallel_runnable(tests: [])], {})
+    end
+  end
+
+  def test_init_runs_preflight_and_refuses_a_suite_that_cannot_prove_anything
+    Minitest.parallel_executor = nil
+
+    assert_raises Minitest::Ractor::ProofNotAttempted do
+      Plugin.init({ ractor: true }, {}, reporter: nil, runnables: [serial_runnable])
+    end
   end
 
   def test_init_does_nothing_when_nobody_asked
