@@ -1,0 +1,20 @@
+#!/usr/bin/env bash
+# Commit-message checks for this repository.
+#
+# IMPORTANT: core.hooksPath replaces the global hooks entirely rather than adding to them, so
+# pointing it at .githooks/ would silently switch off ~/.git-hooks/commit-msg — the hook that
+# rejects Co-Authored-By and Claude-Session trailers and bead ids. Chain to it explicitly.
+set -euo pipefail
+
+global_hook="$HOME/.git-hooks/commit-msg"
+if [ -x "$global_hook" ]; then
+  "$global_hook" "$@"
+fi
+
+# The global hook knows about bead ids but not about ADRs, which are excluded here.
+if grep -qE 'docs/adr/[0-9]' "$1"; then
+  echo "error: commit message references an architecture decision record. docs/adr/ is listed" >&2
+  echo "in .git/info/exclude, so that file exists on this machine only and the reference is" >&2
+  echo "dangling for everybody else. Say the reasoning instead of pointing at it." >&2
+  exit 1
+fi

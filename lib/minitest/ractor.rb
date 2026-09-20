@@ -16,8 +16,10 @@ module Minitest
   # is worth keeping. It is worth keeping because `require "minitest/ractor"` is what somebody
   # will type.
   module Ractor
-    # Raised when the pool was asked for but nothing can, or did, reach a Ractor. Never let a
-    # run like that report success — see docs/adr/0001.
+    # Raised when the pool was asked for but nothing can, or did, reach a Ractor. A green run
+    # that touched no Ractor is the worst failure this tool has, because it is indistinguishable
+    # from success and hands back a proof that was never attempted. So it is an error, never a
+    # warning, and the run stops.
     class ProofNotAttempted < StandardError; end
   end
 end

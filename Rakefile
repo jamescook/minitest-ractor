@@ -18,4 +18,13 @@ rescue LoadError
   # rubocop is a development dependency; the suite must still run without it
 end
 
+namespace :hooks do
+  desc "Point git at .githooks (core.hooksPath is local config, so a fresh clone needs this)"
+  task :install do
+    sh "git config core.hooksPath .githooks"
+    puts "git hooks wired. They reject references to docs/adr/ and to bead ids, neither of"
+    puts "which is checked in, so a reference to either dangles for every other reader."
+  end
+end
+
 task default: :test

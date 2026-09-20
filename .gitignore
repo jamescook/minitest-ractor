@@ -1,5 +1,7 @@
 /pkg/
 /tmp/
+# A library should not pin its dependents' versions.
+/Gemfile.lock
 /doc/
 /.yardoc/
 /coverage/
