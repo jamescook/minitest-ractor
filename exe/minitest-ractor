@@ -1,0 +1,92 @@
+#!/usr/bin/env ruby
+# frozen_string_literal: true
+
+# Audit somebody else's test suite for shared mutable state, without editing it.
+#
+#   minitest-ractor test/
+#   minitest-ractor -w 4 test/models test/lib/thing_test.rb
+#
+# Exit status is 0 when nothing was found, 1 when something was, and 2 when the audit could not
+# be attempted at all. A finding is not an error in this program: the audit worked, and the
+# suite has something to fix.
+
+require "optparse"
+
+# BEFORE ANYTHING OF THE TARGET'S IS LOADED, and this is the whole reason the program is
+# arranged this way. Requiring a test file requires minitest/autorun, which installs an at_exit
+# hook that runs the entire suite a second time after this one finishes. Once that require has
+# happened it cannot be taken back.
+require "minitest/ractor/audit"
+Minitest::Ractor::Audit.silence_autorun!
+
+options = {}
+
+parser = OptionParser.new do |opts|
+  opts.banner = "Usage: minitest-ractor [options] <file-or-directory>..."
+  opts.separator ""
+  opts.separator "Runs a Minitest suite in a pool of Ractors and reports what is not"
+  opts.separator "Ractor-safe. The suite needs no changes and no parallelize_me!."
+  opts.separator ""
+
+  # Without this almost no real suite loads: test files require "test_helper", which is only
+  # findable with the target's own test/ and lib/ on the path. Repeatable, like ruby's own -I.
+  opts.on "-I", "--include PATH", "Add to $LOAD_PATH (repeatable)" do |path|
+    $LOAD_PATH.unshift File.expand_path(path)
+  end
+
+  opts.on "-w", "--workers N", Integer, "Pool size (default: one per processor)" do |n|
+    options[:workers] = n
+  end
+
+  opts.on "-s", "--seed N", Integer, "Minitest seed (default: 42)" do |n|
+    options[:seed] = n
+  end
+
+  opts.on "-c", "--causes N", Integer, "Causes to report in full (default: 20)" do |n|
+    options[:limit] = n
+  end
+
+  opts.on "-h", "--help", "Show this message" do
+    puts opts
+    exit 0
+  end
+end
+
+paths = parser.parse ARGV
+
+# $stderr.puts throughout rather than Kernel#warn, which is a NO-OP under -W0. Anybody running
+# this is likely to pass -W0, because Ruby prints an experimental-API warning the moment a
+# Ractor is created — so warn would have swallowed every message this program has. Measured:
+# with warn and -W0 this program exited 2 in total silence.
+#
+# Style/StderrPuts argues for warn precisely so the output CAN be disabled. These messages are
+# the program's only way of explaining itself, so being disablable is the defect.
+# rubocop:disable Style/StderrPuts
+if paths.empty?
+  $stderr.puts parser
+  exit 2
+end
+
+audit = Minitest::Ractor::Audit.new paths, **options
+
+begin
+  inventory = audit.run
+rescue Minitest::Ractor::Audit::NothingToRun => e
+  $stderr.puts "minitest-ractor: #{e.message}"
+  exit 2
+end
+
+# Said before the report rather than after it. A file that would not load is not a finding about
+# Ractors and must not be counted as one, but a suite audited with a tenth of it missing is a
+# different claim from one audited whole, and the reader needs that before the numbers.
+unless audit.load_failures.empty?
+  $stderr.puts "minitest-ractor: #{audit.load_failures.size} file(s) would not load, " \
+               "and were not audited:"
+  audit.load_failures.each { |file, why| $stderr.puts "  #{file}\n    #{why}" }
+  $stderr.puts
+end
+
+puts inventory
+# rubocop:enable Style/StderrPuts
+
+exit inventory.empty? ? 0 : 1

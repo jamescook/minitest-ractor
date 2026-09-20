@@ -61,6 +61,27 @@ rake test TESTOPTS="--ractor"
 MT_RACTOR=1 rake test
 ```
 
+## Auditing a suite you have not prepared
+
+The other way in, and the one to reach for when the suite is not yours. No `parallelize_me!`,
+no Gemfile entry, no edits of any kind:
+
+```bash
+minitest-ractor -I lib -I test test/
+```
+
+It loads the test files, runs every test in the pool whether or not anything is marked parallel,
+and prints the same inventory. Exit status is 0 when nothing was found, 1 when something was,
+and 2 when the audit could not be attempted.
+
+`-I` is usually required, the same way `ruby -I` is: test files tend to `require "test_helper"`,
+which is only findable with the target's own directories on the load path.
+
+Doing this means defeating Minitest's autorun hook, which would otherwise run the whole suite a
+second time underneath the audit and print its own summary last. Minitest offers no supported
+way to stop that, so the runner uses the only lever there is — claiming the hook is already
+installed — and keeps that one unsupported line in one file, with a comment saying why.
+
 ## What it tells you
 
 ```

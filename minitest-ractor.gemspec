@@ -33,6 +33,10 @@ Gem::Specification.new do |spec|
     end
   end
 
+  # The audit runner: point it at a suite nobody has prepared and get back an inventory.
+  spec.bindir      = "exe"
+  spec.executables = ["minitest-ractor"]
+
   spec.require_paths = ["lib"]
 
   spec.add_dependency "minitest", "~> 6.0"
