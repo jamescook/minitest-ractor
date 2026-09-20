@@ -23,3 +23,14 @@ module Minitest
     class ProofNotAttempted < StandardError; end
   end
 end
+
+# Requiring this is what makes --ractor exist.
+#
+# Minitest 6 does not auto-discover plugins the way 5 did, so nothing registers this gem unless
+# somebody asks for it by name. `require "minitest/ractor"` at the top of a test_helper is that
+# ask, and it is deliberately the whole of it: the flag appears, MT_RACTOR starts being read, and
+# nothing else changes until one of them says so.
+#
+# Required at the BOTTOM because the plugin reaches back for ProofNotAttempted above. Ruby
+# tolerates the cycle only in this direction.
+require_relative "ractor_plugin"
