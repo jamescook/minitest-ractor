@@ -22,7 +22,7 @@ module Minitest
       DEFAULT_LIMIT = 20
       EXAMPLES = 3
 
-      attr_reader :findings, :ordinary_failures, :total
+      attr_reader :findings, :ordinary_failures, :total, :reached_workers
 
       def self.from(results, limit: DEFAULT_LIMIT)
         findings = []
@@ -35,8 +35,17 @@ module Minitest
           ordinary += 1 if failed?(result)
         end
 
-        new findings:, ordinary_failures: ordinary, total: results.size, limit:
+        new findings:, ordinary_failures: ordinary, total: results.size, limit:,
+            reached_workers: results.count { |result| in_a_worker? result }
       end
+
+      # The executor stamps every result with the worker that ran it, so an unstamped result is
+      # one that never left the main Ractor. Worth counting, because "nothing failed" and
+      # "nothing was tried" look identical from the outside and only one of them is a proof.
+      def self.in_a_worker?(result)
+        result.respond_to?(:metadata) && !result.metadata[:minitest_ractor_worker].nil?
+      end
+      private_class_method :in_a_worker?
 
       # Skips are not failures, and a passing result has nothing to answer for. Anything that
       # reached here without being classified as a finding and still did not pass is somebody's
@@ -46,11 +55,13 @@ module Minitest
       end
       private_class_method :failed?
 
-      def initialize(findings:, ordinary_failures: 0, total: 0, limit: DEFAULT_LIMIT)
+      def initialize(findings:, ordinary_failures: 0, total: 0, limit: DEFAULT_LIMIT,
+                     reached_workers: 0)
         @findings          = findings
         @ordinary_failures = ordinary_failures
         @total             = total
         @limit             = limit
+        @reached_workers   = reached_workers
       end
 
       # Causes, each with its findings, commonest first.
@@ -183,13 +194,38 @@ module Minitest
       # A green run is the product, so it is worth saying properly — including the limit, which
       # is the part people drop when they repeat it.
       def nothing_found
+        return nothing_attempted if @reached_workers.zero? && @total.positive?
+
         [*heading("no findings"),
          "",
-         *wrap("#{count(@total, 'test')} ran in workers and none of them reached shared mutable " \
-               "state.", WIDTH),
+         *wrap("#{count(@reached_workers, 'test')} ran in workers and none of them reached " \
+               "shared mutable state.", WIDTH),
          "",
          *wrap("The proof is narrow on purpose. It covers the code THESE TESTS REACHED and says " \
                "nothing about code they did not.", WIDTH),
+         *ordinary_note].join("\n")
+      end
+
+      # Nothing failed and nothing was attempted look identical from the outside, and only one of
+      # them is a proof. Claiming the first while meaning the second is the worst thing this tool
+      # can do: it is indistinguishable from success and nobody ever finds out.
+      #
+      # The usual cause is a suite whose classes never called parallelize_me!. Minitest only
+      # routes a class through the parallel executor once it has, so without it every test runs
+      # in the main Ractor and passes for exactly the reason it always did.
+      def nothing_attempted
+        [*heading("NO PROOF — nothing reached a Ractor"),
+         "",
+         *wrap("#{count(@total, 'test')} ran and not one of them left the main Ractor, so " \
+               "nothing here was tested for isolation. This is not a pass.", WIDTH),
+         "",
+         *wrap("Minitest only routes a class through the parallel executor once it has called " \
+               "parallelize_me!. Add it to the test classes you want covered, or to " \
+               "Minitest::Test itself to cover everything:", WIDTH),
+         "",
+         "    class Minitest::Test",
+         "      parallelize_me!",
+         "    end",
          *ordinary_note].join("\n")
       end
 

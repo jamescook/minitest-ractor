@@ -113,4 +113,29 @@ class TestInventory < Minitest::Test
     assert_includes report, "none of them reached shared mutable state"
     assert_includes report, "THESE TESTS REACHED"
   end
+
+  # THE CARDINAL SIN. A suite whose classes never called parallelize_me! runs entirely in the
+  # main Ractor, and every test passes for the same reason it always did. Reporting "no findings"
+  # there claims a proof that was never attempted, which is indistinguishable from success and
+  # the worst thing this tool can do.
+  #
+  # The executor stamps every result with the worker that ran it, so an unstamped result is one
+  # that never left home and the report can tell.
+  def test_a_run_that_never_reached_a_worker_does_not_claim_a_proof
+    never_left_home = %w[test_passes].map { |name| CrossingFixture.new(name).run }
+
+    report = Inventory.from(never_left_home).to_s
+
+    refute_includes report, "none of them reached shared mutable state",
+                    "this run proved nothing and must not say otherwise"
+    assert_includes report, "parallelize_me!", "and it has to say what is missing"
+  end
+
+  def test_it_counts_how_many_tests_actually_reached_a_worker
+    through_the_pool = results_for CrossingFixture, %w[test_passes]
+    at_home          = [CrossingFixture.new("test_passes").run]
+
+    assert_equal 1, Inventory.from(through_the_pool).reached_workers
+    assert_equal 0, Inventory.from(at_home).reached_workers
+  end
 end
