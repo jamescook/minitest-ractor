@@ -2,6 +2,7 @@
 
 require "etc"
 require "minitest"
+require_relative "error_chain"
 require_relative "shareable_constants"
 
 module Minitest
@@ -41,10 +42,6 @@ module Minitest
       #
       # A class method rather than an instance one because a worker has to call it too, and a
       # worker cannot reach the executor object — only shareable things, which a class is.
-      def self.backtrace_holder(failure)
-        failure.respond_to?(:error) ? failure.error : failure
-      end
-
       def start
         ShareableConstants.apply!
 
@@ -101,8 +98,15 @@ module Minitest
             #
             # So lift the frames out here, where they still exist, and carry them as plain data.
             # An Array of Strings crosses a Port perfectly well.
+            #
+            # One list per failure, one entry per link in its cause chain — the cause keeps its
+            # message across the Port but loses its frames just like the failure does, and for a
+            # masked isolation error the cause's frames are the only ones that name the code at
+            # fault.
             result.metadata[:minitest_ractor_backtraces] =
-              result.failures.map { |failure| Array(Executor.backtrace_holder(failure).backtrace) }
+              result.failures.map do |failure|
+                ErrorChain.of(failure).map { |error| Array(error.backtrace) }
+              end
 
             home.send [me, result]
           end
@@ -127,8 +131,12 @@ module Minitest
         carried = result.metadata.delete :minitest_ractor_backtraces
         return unless carried
 
-        result.failures.zip(carried) do |failure, frames|
-          self.class.backtrace_holder(failure).set_backtrace frames if frames
+        result.failures.zip(carried) do |failure, chain|
+          next unless chain
+
+          ErrorChain.of(failure).zip(chain) do |error, frames|
+            error.set_backtrace frames if frames
+          end
         end
       end
     end

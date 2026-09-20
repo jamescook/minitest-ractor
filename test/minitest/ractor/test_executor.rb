@@ -5,6 +5,7 @@ require "minitest/ractor/executor"
 require "recording_reporter"
 require "fixtures/crossing_test"
 require "fixtures/unsafe_test"
+require "fixtures/masked_test"
 
 class TestExecutor < Minitest::Test
   def setup
@@ -121,6 +122,22 @@ class TestExecutor < Minitest::Test
 
     refute_empty Array(failure.backtrace)
     assert_includes failure.backtrace.join("\n"), "crossing_test.rb"
+  end
+
+  # Carrying the failure's own backtrace is not enough when the failure is a mask. Here the
+  # failure is the Minitest::Assertion raised by assert_raises and its frames point at
+  # assert_raises; the isolation error is one link down the cause chain, and the Port empties
+  # its backtrace exactly the same way. Without this the classifier can name the cause and still
+  # not say where it happened.
+  def test_a_masked_isolation_error_arrives_with_its_own_backtrace
+    run_jobs %w[test_expects_an_argument_error], klass: MaskedFixture
+
+    failure = @reporter.recorded.first.result.failures.first
+    cause   = failure.cause
+
+    assert_kind_of ::Ractor::IsolationError, cause, "the cause chain should survive the Port"
+    refute_empty Array(cause.backtrace), "a cause with no backtrace cannot be located"
+    assert_includes cause.backtrace.join("\n"), "masked_test.rb"
   end
 
   def test_the_pool_survives_shared_mutable_state_and_keeps_working
