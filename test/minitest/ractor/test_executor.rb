@@ -55,12 +55,29 @@ class TestExecutor < Minitest::Test
     assert_match(/Expected: 5/, failure.message)
   end
 
+  # Ractor.count is process-global and LAGS actual termination: a worker that has already handed
+  # back its value can still be counted for a moment afterwards. Asserting it once made this test
+  # fail roughly one run in twenty — more often as the rest of the suite grew Ractors of its own —
+  # which in a tool whose product is trustworthy failure reporting is worse than in most places.
+  #
+  # Polling keeps what the test is actually for. A genuinely orphaned worker never terminates, so
+  # it still fails, just after a wait instead of a coin toss.
+  def settled_ractor_count(target, timeout: 2)
+    deadline = Process.clock_gettime(Process::CLOCK_MONOTONIC) + timeout
+
+    while ::Ractor.count > target && Process.clock_gettime(Process::CLOCK_MONOTONIC) < deadline
+      sleep 0.001
+    end
+
+    ::Ractor.count
+  end
+
   def test_shutdown_leaves_no_workers_behind
     baseline = ::Ractor.count
 
     run_jobs %w[test_passes test_fails test_errors test_skips]
 
-    assert_equal baseline, ::Ractor.count
+    assert_equal baseline, settled_ractor_count(baseline)
   end
 
   # Four jobs over three workers: the first three go out before any can come back, because a
