@@ -10,13 +10,19 @@ module Minitest
     # must never appear in the inventory. The two are kept apart because that separation is the
     # only thing that makes the inventory worth reading.
     class Finding
-      attr_reader :cause, :klass, :name, :origin
+      attr_reader :cause, :klass, :name, :origin, :defined_at
 
-      def initialize(cause:, klass:, name:, origin: nil)
-        @cause  = cause
-        @klass  = klass
-        @name   = name
-        @origin = origin
+      # origin is where the refusal happened. defined_at is where the TEST is written, and the
+      # two are not always the same place — Ruby refuses a method built from an unshareable Proc
+      # before entering it, so a test written with define_method produces a backtrace with no
+      # frame of its author's anywhere on it. Minitest computes the definition site anyway, so
+      # the report has something to point at when the origin is inside somebody else's library.
+      def initialize(cause:, klass:, name:, origin: nil, defined_at: nil)
+        @cause      = cause
+        @klass      = klass
+        @name       = name
+        @origin     = origin
+        @defined_at = defined_at
         freeze
       end
 

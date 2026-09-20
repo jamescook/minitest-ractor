@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require_relative "classifier"
+require_relative "provenance"
 
 module Minitest
   module Ractor
@@ -119,13 +120,23 @@ module Minitest
       # fix lives at that line. When Ruby named nothing, the location IS the identity.
       def locator(cause)
         where = relative(cause.origin)
+        where += "  (inside #{Provenance.of(cause.origin)} code, not yours)" unless
+          Provenance.editable?(cause.origin)
 
         cause.named? ? "first seen at #{where}" : "at #{where}"
       end
 
+      # Names each test, and where it is written when the cause's own location is no use to
+      # anybody — a refusal reported inside minitest is a true location and an unhelpful one, so
+      # the tests get to say where they actually live.
       def reached_by(found)
-        shown = found.first(EXAMPLES).map { |finding| "       #{finding.location}" }
-        rest  = found.size - shown.size
+        anchor = !Provenance.editable?(found.first.origin)
+
+        shown = found.first(EXAMPLES).map do |finding|
+          written = " — written at #{relative(finding.defined_at)}" if anchor && finding.defined_at
+          "       #{finding.location}#{written}"
+        end
+        rest = found.size - shown.size
 
         ["     Reached by:", *shown, *(rest.positive? ? ["       ...and #{rest} more"] : [])]
       end

@@ -29,8 +29,21 @@ module Minitest
         cause = refusal_in(result)
         return nil unless cause
 
-        Finding.new(cause:, klass: result.klass, name: result.name, origin: cause.origin)
+        Finding.new(cause:, klass: result.klass, name: result.name, origin: cause.origin,
+                    defined_at: written_at(result))
       end
+
+      # Minitest records `o.method(o.name).source_location` on every Result, and falls back to
+      # ["unknown", -1] when it cannot work one out.
+      def self.written_at(result)
+        return nil unless result.respond_to? :source_location
+
+        file, line = result.source_location
+        return nil if file.nil? || file == "unknown"
+
+        "#{file}:#{line}"
+      end
+      private_class_method :written_at
 
       def self.findings(results)
         results.filter_map { |result| classify result }

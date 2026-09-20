@@ -106,6 +106,19 @@ class TestClassifier < Minitest::Test
     assert_includes finding.origin.to_s, "unsafe_test.rb"
   end
 
+  # Where the TEST is written, which is not always where the refusal happened.
+  #
+  # Ruby refuses a method built from an unshareable Proc before entering it, so a test defined
+  # with define_method produces a backtrace with no frame of the author's on it at all — the top
+  # frame is minitest's own dispatch line. Walking the backtrace cannot help, because there is
+  # nothing to walk to. Minitest already computes the definition site though, so a finding
+  # carries it and the report has something honest to point at.
+  def test_a_finding_knows_where_its_test_is_written
+    finding = Classifier.classify results_for(MaskedFixture, %w[test_reads_it_plainly]).first
+
+    assert_includes finding.defined_at.to_s, "masked_test.rb"
+  end
+
   def test_a_finding_names_the_test_it_came_from
     finding = Classifier.classify results_for(MaskedFixture, %w[test_reads_it_plainly]).first
 
