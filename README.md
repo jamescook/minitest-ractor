@@ -148,11 +148,9 @@ application. With it, the original is left alone — verified: after taking the 
 ### Nobody can fix from Ruby
 
 - **A C extension that never declared itself Ractor-safe.** Extensions are shut out of Ractors
-  by default, and an author opts in by calling `rb_ext_ractor_safe(true)` in the extension's
-  `Init_` function, which makes subsequent `rb_define_method` definitions callable from a Ractor.
-  It is an assertion by the author rather than something Ruby checks. Most of the standard
-  library has done it — Digest, Zlib, StringIO, Socket, JSON, Date and Etc all work from a
-  worker — while Ripper and Fiddle do not. There is no flag you can set from Ruby.
+  by default; the author opts in from C with `rb_ext_ractor_safe(true)`, and nothing in Ruby can
+  do it for them. Most of the standard library has — Digest, Zlib, StringIO, Socket, JSON, Date
+  and Etc all work from a worker. Ripper and Fiddle have not.
 - **A class variable in somebody else's code.** `Minitest::Runnable`'s own `@@runnables` is an
   example. Refused even when shareable, and not yours to change.
 
