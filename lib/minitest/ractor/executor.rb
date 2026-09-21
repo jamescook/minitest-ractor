@@ -139,6 +139,8 @@ module Minitest
         klass, method_name, reporter = work
 
         reporter.prerecord klass, method_name
+        return run_here(klass, method_name, reporter) if opted_out? klass
+
         collect_one if @idle.empty?
 
         id = @idle.shift
@@ -160,6 +162,24 @@ module Minitest
       end
 
       private
+
+      # A class that said runs_on_the_main_ractor!. Asked rather than assumed, because a runnable
+      # need not be a Minitest::Test at all.
+      def opted_out?(klass)
+        klass.respond_to?(:runs_on_the_main_ractor?) && klass.runs_on_the_main_ractor?
+      end
+
+      # Runs it here, in the main Ractor, and records it like any other result.
+      #
+      # Stamped as having asked, which is what keeps it out of the coverage figure without
+      # looking like a test that failed to reach a worker. Those are different things: one is a
+      # deliberate narrowing of what the run proves, the other is the proof going missing.
+      def run_here(klass, method_name, reporter)
+        result = self.class.result_for klass, method_name
+        result.metadata[:minitest_ractor_opted_out] = true
+        reporter.record result
+        self
+      end
 
       def spawn(id)
         ::Ractor.new(@results, id) do |home, me|

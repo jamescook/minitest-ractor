@@ -151,7 +151,8 @@ class TestInventory < Minitest::Test
     report = Inventory.from(mixed).to_s
 
     assert_includes report, "1 of 2 tests ran in Ractors"
-    assert_includes report, "says nothing about the rest"
+    assert_includes report, "without asking", "a test nobody excused is not the same as one that did"
+    assert_includes report, "says nothing about them"
     refute_match(/warning|should|must|failed to/i, report.lines.grep(/ran in Ractors/).join)
   end
 

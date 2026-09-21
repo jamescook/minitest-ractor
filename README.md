@@ -61,6 +61,33 @@ rake test TESTOPTS="--ractor"
 MT_RACTOR=1 rake test
 ```
 
+## Tests that are about global state
+
+Some tests exist to exercise registration — adding a plugin, a font, a guardrail, a
+middleware. Registering usually *defines methods on a class*, which changes the whole process
+by design, because that is what the feature is. A worker may not do that, and rewriting such a
+test so that it could would mean not testing the feature.
+
+Those classes say so:
+
+```ruby
+class EffectsRegistryTest < Minitest::Test
+  runs_on_the_main_ractor!
+end
+```
+
+They run in the main Ractor, pass normally, and produce no findings. The report counts them as
+their own thing, because the scope of the proof depends on it:
+
+```
+3 of 5 tests ran in Ractors, and none of them reached shared mutable state. 2 asked not to.
+```
+
+**Watch that second number.** It is the only way to silence a finding, so a suite where it grows
+is a suite quietly narrowing what it proves. It is per class rather than per test on purpose: a
+whole file is the honest unit when the file is about registration, and a per-test form would
+invite marking one test to hide a problem its siblings share.
+
 ## Auditing a suite you have not prepared
 
 The other way in, and the one to reach for when the suite is not yours. No `parallelize_me!`,

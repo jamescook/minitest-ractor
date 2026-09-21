@@ -23,7 +23,7 @@ module Minitest
       DEFAULT_LIMIT = 20
       EXAMPLES = 3
 
-      attr_reader :findings, :ordinary_failures, :total, :reached_workers
+      attr_reader :findings, :ordinary_failures, :total, :reached_workers, :opted_out
 
       def self.from(results, limit: DEFAULT_LIMIT)
         findings = []
@@ -37,8 +37,17 @@ module Minitest
         end
 
         new findings:, ordinary_failures: ordinary, total: results.size, limit:,
-            reached_workers: results.count { |result| in_a_worker? result }
+            reached_workers: results.count { |result| in_a_worker? result },
+            opted_out: results.count { |result| opted_out? result }
       end
+
+      # Said runs_on_the_main_ractor!. A THIRD CATEGORY, next to findings and ordinary failures,
+      # and it has to be counted separately for the same reason those two do: it changes what the
+      # run proves. A test that asked not to go is not a test that failed to get there.
+      def self.opted_out?(result)
+        result.respond_to?(:metadata) && result.metadata[:minitest_ractor_opted_out] == true
+      end
+      private_class_method :opted_out?
 
       # The executor stamps every result with the worker that ran it, so an unstamped result is
       # one that never left the main Ractor. Worth counting, because "nothing failed" and
@@ -57,12 +66,13 @@ module Minitest
       private_class_method :failed?
 
       def initialize(findings:, ordinary_failures: 0, total: 0, limit: DEFAULT_LIMIT,
-                     reached_workers: 0)
+                     reached_workers: 0, opted_out: 0)
         @findings          = findings
         @ordinary_failures = ordinary_failures
         @total             = total
         @limit             = limit
         @reached_workers   = reached_workers
+        @opted_out         = opted_out
       end
 
       # Causes, each with its findings, commonest first.
@@ -176,12 +186,21 @@ module Minitest
       # serial classes is perfectly legitimate, so a partial number is not a shortfall to
       # apologise for — it is the honest answer to "what did this cover", which until now was a
       # limitation stated in prose and never in figures.
+      # The scope of the proof, in figures, every run.
+      #
+      # The opt-outs get their own sentence rather than being folded into the shortfall. A test
+      # that said runs_on_the_main_ractor! narrowed the proof ON PURPOSE, and reading that as the
+      # same thing as a test the pool failed to reach would hide the one number worth watching:
+      # if it grows, somebody is silencing findings with it.
       def coverage(clause = nil)
         line = "#{@reached_workers} of #{count(@total, 'test')} ran in Ractors#{clause}."
-        return wrap(line, WIDTH) if @reached_workers == @total
+        line += " #{@opted_out} asked not to." if @opted_out.positive?
 
-        wrap("#{line} The proof covers those #{@reached_workers} and says nothing about the " \
-             "rest, which ran in the main Ractor.", WIDTH)
+        unaccounted = @total - @reached_workers - @opted_out
+        return wrap(line, WIDTH) unless unaccounted.positive?
+
+        wrap("#{line} The other #{unaccounted} ran in the main Ractor without asking, so the " \
+             "proof says nothing about them.", WIDTH)
       end
 
       # The rest, one line each, rather than a count of things withheld.
@@ -251,14 +270,34 @@ module Minitest
          *wrap("#{count(@total, 'test')} ran and not one of them left the main Ractor, so " \
                "nothing here was tested for isolation. This is not a pass.", WIDTH),
          "",
-         *wrap("Minitest only routes a class through the parallel executor once it has called " \
-               "parallelize_me!. Add it to the test classes you want covered, or to " \
-               "Minitest::Test itself to cover everything:", WIDTH),
-         "",
-         "    class Minitest::Test",
-         "      parallelize_me!",
-         "    end",
+         *wrap(why_nothing_ran, WIDTH),
+         *parallelize_me_snippet,
          *ordinary_note].join("\n")
+      end
+
+      def parallelize_me_snippet
+        return [] if everything_opted_out?
+
+        ["", "    class Minitest::Test", "      parallelize_me!", "    end"]
+      end
+
+      def everything_opted_out?
+        @opted_out.positive? && @opted_out == @total
+      end
+
+      # Two quite different situations, and telling somebody to add parallelize_me! when every
+      # class already said runs_on_the_main_ractor! would send them to do the one thing that
+      # cannot help.
+      def why_nothing_ran
+        if everything_opted_out?
+          "Every one of them said runs_on_the_main_ractor!. That is a legitimate thing for a " \
+            "test about global state to say, but a suite where they ALL say it proves nothing " \
+            "at all, and the opt-out is worth revisiting rather than the report."
+        else
+          "Minitest only routes a class through the parallel executor once it has called " \
+            "parallelize_me!. Add it to the test classes you want covered, or to " \
+            "Minitest::Test itself to cover everything:"
+        end
       end
 
       # Absolute paths are how a backtrace arrives and not how anybody reads one.

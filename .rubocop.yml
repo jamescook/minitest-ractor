@@ -27,6 +27,12 @@ Metrics/ModuleLength:
 Metrics/BlockLength:
   Enabled: false
 
+# A long POSITIONAL list is genuinely hard to read; six keywords that each name themselves at
+# the call site are not, and bundling them into an options hash to satisfy a count would make
+# things worse rather than better.
+Metrics/ParameterLists:
+  CountKeywordArgs: false
+
 Style/Documentation:
   Enabled: false
 

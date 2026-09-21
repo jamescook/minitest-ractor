@@ -2,6 +2,7 @@
 
 require_relative "ractor/version"
 require_relative "ractor/errors"
+require_relative "ractor/opt_out"
 
 module Minitest
   # Runs a Minitest suite in a pool of Ractors instead of a pool of threads, so that any shared
