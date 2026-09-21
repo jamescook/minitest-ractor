@@ -1,35 +1,30 @@
 # frozen_string_literal: true
 
-# The plugin file, named the way Minitest.load_plugins expects so that anybody who calls it
-# finds us.
+# The plugin file, named the way Minitest.load_plugins expects, so a suite that calls it finds
+# this the same as any other plugin.
 #
-# MINITEST 6 DOES NOT AUTO-DISCOVER PLUGINS, AND MINITEST 5 DID. Minitest 5 ran
-# `load_plugins unless ... MT_NO_PLUGINS` inside Minitest.run, so every installed gem's
-# minitest/*_plugin.rb was required on every run on the machine; minitest 6 deleted that line and
-# documents load_plugins as "optional, called by user, or require what you want". Since this gem
-# is Ruby 4.x only, and Ruby 4.0.7 ships minitest 6, nothing loads this file uninvited.
+# DISCOVERY STILL EXISTS IN MINITEST 6, BUT NOTHING CALLS IT FOR YOU. Minitest.load_plugins is
+# still there and still requires minitest/*_plugin.rb out of every installed gem; Minitest.run
+# simply no longer runs it. So discovery is a thing a suite opts into.
 #
-# That has two consequences, and the second is easy to miss:
+# Which means nothing loads this file uninvited — and nothing registers it either. Registration
+# is the step load_plugins does after the require, and without it Minitest never calls the hooks
+# below: --ractor would not even parse. So this file registers itself, through the API minitest
+# documents for exactly this case. register_plugin "does NOT require / load it", which is the
+# position of a plugin whose file somebody has already required by name.
 #
-#   1. The old worry is gone. Installing this gem cannot change how anybody else's suite runs,
-#      because nothing will load this.
-#   2. Nothing appends "ractor" to Minitest.extensions either, and without that entry Minitest
-#      never calls the hooks below — the --ractor flag would not even parse. So this file has to
-#      register itself, which load_plugins would otherwise have done.
-#
-# Opt-in is still the design, for a different reason than before: requiring a gem is not the same
-# as asking for every test to run in a Ractor today, and somebody who wants it only in CI should
-# not have to un-require it.
+# Registering only puts the flag on the table. Requiring this gem is still not the same as asking
+# for every test to run in a Ractor today, so --ractor and MT_RACTOR remain the only ways in.
 #
 # The decisions all live in Minitest::Ractor::Plugin so that they can be tested without loading
 # this.
 
 require_relative "ractor/plugin"
 
-# Guarded because Minitest.load_plugins appends the name itself, after requiring the file, so a
-# suite that calls it would otherwise end up with two of us. Harmless if it happens — init checks
-# rather than remembers — but there is no reason to leave it.
-Minitest.extensions << "ractor" unless Minitest.extensions.include? "ractor"
+# Guarded because load_plugins appends the name itself after requiring the file, so a suite that
+# calls it as well would end up with two of us. Harmless — init checks rather than remembers —
+# but there is no reason to leave it.
+Minitest.register_plugin "ractor" unless Minitest.extensions.include? "ractor"
 
 module Minitest
   def self.plugin_ractor_options(opts, options) # :nodoc:
