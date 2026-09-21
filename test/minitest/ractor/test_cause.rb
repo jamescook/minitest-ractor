@@ -300,6 +300,44 @@ class TestCause < Minitest::Test
     refute_equal "test/somewhere_else.rb:99", cause.origin
   end
 
+  # WHO OWNS IT AND WHO READS IT ARE TWO QUESTIONS, and a tier-3 remedy has to answer both. Found
+  # in the wild: a Mutex belonging to WebMock, a gem, reached from Ruby's own singleton.rb. The
+  # advice said "also belongs to a gem" directly under a locator saying "ruby code".
+  #
+  # @io_lock is the same shape and needs no extra dependency — a Mutex on a class minitest owns.
+  # The message is Ruby's own; only the frame is written here, because reproducing "read from
+  # inside the standard library" needs the standard library, and the frame is what is under test.
+  RUBY_FRAME = "#{RbConfig::CONFIG['rubylibdir']}/singleton.rb:128:in 'instance'".freeze
+
+  def a_gems_mutex_read_from_ruby
+    error = refusal { ::Minitest::Test.instance_variable_get(:@io_lock) }
+    error.set_backtrace [RUBY_FRAME]
+    Cause.from error
+  end
+
+  def test_the_thing_and_the_line_that_reads_it_are_reported_separately
+    cause = a_gems_mutex_read_from_ruby
+
+    assert_equal :gem, cause.owned_by, "the mutex is minitest's"
+    assert_equal :ruby, cause.read_by, "the line that reads it is the standard library's"
+
+    assert_includes cause.remedy, "belongs to a gem"
+    assert_includes cause.remedy, "The line that reads it belongs to Ruby"
+  end
+
+  # The report must not contradict its own locator, which is what gave this away.
+  def test_the_remedy_does_not_claim_the_reader_belongs_to_the_owner
+    refute_includes a_gems_mutex_read_from_ruby.remedy, "also belongs to a gem"
+  end
+
+  # ...and when they really are the same, saying it twice reads badly, so that case keeps "also".
+  def test_one_owner_for_both_is_still_said_once
+    cause = Cause.from(refusal { ::Minitest::Runnable.runnables })
+
+    assert_equal cause.owned_by, cause.read_by
+    assert_includes cause.remedy, "also belongs to a gem"
+  end
+
   # An unrecognised refusal keeps its own answer whatever the tier. "We do not know what this is"
   # is worth more than confident instructions about something we could not identify.
   def test_an_unrecognised_refusal_keeps_its_own_remedy

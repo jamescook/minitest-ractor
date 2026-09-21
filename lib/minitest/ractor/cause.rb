@@ -150,7 +150,7 @@ module Minitest
       # replace. The extension is what somebody fixes, so the extension is the cause.
       IDENTIFIED_BY_METHOD = %i[unsafe_method].freeze
 
-      attr_reader :kind, :variable, :owner, :origin, :message, :tier, :owned_by
+      attr_reader :kind, :variable, :owner, :origin, :message, :tier, :owned_by, :read_by
 
       # Returns nil for anything that is not a refusal — that is an ordinary failure, and turning
       # one into a finding is as damaging as dropping one.
@@ -196,7 +196,10 @@ module Minitest
         @origin   = origin
         @variable = capture(match, :variable) || method_in_origin
         @owner    = capture match, :owner
+        # The two questions the tier turns on, kept apart deliberately. Answering the second with
+        # the first is what made the report contradict itself — see #reader_sentence.
         @owned_by = whose_thing_is_it
+        @read_by  = Provenance.of @origin
         @tier     = tier_for
         freeze
       end
@@ -258,7 +261,7 @@ module Minitest
       def tier_for
         return :nobodys if @kind == :unsafe_method
         return :yours   if mine? @owned_by
-        return :theirs  if SNAPSHOTTABLE.include?(@kind) && Provenance.editable?(@origin)
+        return :theirs  if SNAPSHOTTABLE.include?(@kind) && @read_by == :project
 
         :nobodys
       end
@@ -313,10 +316,25 @@ module Minitest
       def out_of_reach_advice
         return REMEDIES[:unsafe_method] if @kind == :unsafe_method
 
-        "#{subject || 'This state'} belongs to #{WHOSE[@owned_by]}. The line that reads it also " \
-          "belongs to #{WHOSE[@owned_by]}. You cannot change either one. Keep these tests out " \
-          "of the pool: add runs_on_the_main_ractor! to the test class. As an alternative, " \
-          "read the state in the main Ractor before the run."
+        "#{subject || 'This state'} belongs to #{WHOSE[@owned_by]}. #{reader_sentence} You " \
+          "cannot change either one. Keep these tests out of the pool: add " \
+          "runs_on_the_main_ractor! to the test class. As an alternative, read the state in the " \
+          "main Ractor before the run."
+      end
+
+      # WHO OWNS THE THING AND WHO READS IT ARE TWO QUESTIONS. This sentence used to answer the
+      # second with the first, which was right whenever they agreed and wrong when they did not.
+      # Found in the wild: a Mutex belonging to WebMock, a gem, reached from Ruby's own
+      # singleton.rb. The remedy said "also belongs to a gem" two lines under a locator that said
+      # "ruby code", so the report contradicted itself on one screen.
+      def reader_sentence
+        return "The line that reads it is not in your project." if @read_by == :unknown
+
+        if @read_by == @owned_by
+          "The line that reads it also belongs to #{WHOSE[@owned_by]}."
+        else
+          "The line that reads it belongs to #{WHOSE[@read_by]}."
+        end
       end
 
       def capture(match, name)
