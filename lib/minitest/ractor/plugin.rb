@@ -11,11 +11,9 @@ module Minitest
     # minitest/ractor_plugin.rb, which is only the file RubyGems finds, so that the decisions can
     # be tested without loading anything into the world.
     #
-    # WHY OPT-IN. On minitest 5 it was survival: load_plugins required minitest/*_plugin.rb from
-    # every installed gem on every run, so acting at load time would have hijacked suites that
-    # had never heard of this one. Minitest 6 dropped that call, so now only people who required
-    # this gem by name are affected — and requiring a gem still is not the same as wanting every
-    # test in a Ractor today, so the flag and the env var remain the only two ways in.
+    # WHY OPT-IN. Requiring a gem is not the same as wanting every test to run in a Ractor today,
+    # and somebody who wants that only in CI should not have to un-require it. So loading this
+    # changes nothing by itself, and the flag and the env var are the only two ways in.
     #
     # WHY THERE ARE TWO WAYS IN, AND THEY ARE NOT INTERCHANGEABLE. --ractor is the one to use and
     # the one that reads well. But a flag is not visible until Minitest.run parses the command

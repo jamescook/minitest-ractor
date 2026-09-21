@@ -19,10 +19,8 @@ class TestPlugin < Minitest::Test
   # THE GUARANTEE THE WHOLE OPT-IN DESIGN EXISTS FOR. Loading this gem must change nothing on its
   # own: the flag and the env var are the only two things that may switch a suite to Ractors.
   #
-  # On minitest 5 the stakes were higher — load_plugins required every installed gem's plugin
-  # file on every run, so acting at load time would have hijacked suites that had never heard of
-  # this one. Minitest 6 dropped that, so now it is only the people who asked for the gem by name
-  # who would be surprised. Which is still reason enough.
+  # The people it would surprise are the ones who asked for the gem by name, which is reason
+  # enough: wanting Ractors in CI is not the same as wanting them on every run.
   def test_nothing_happens_without_being_asked
     Minitest.parallel_executor = nil
 

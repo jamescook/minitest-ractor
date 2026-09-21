@@ -9,9 +9,9 @@ require "open3"
 # loaded by the time a flag becomes readable, and what parallelize_me! already decided before
 # that. None of it can be tested in a process that has finished loading, so these shell out.
 #
-# The fixture requires "minitest/ractor" the way a test_helper would, which on minitest 6 is the
-# whole of how a plugin gets registered: load_plugins is no longer called for you, so there is no
-# discovery to simulate. What these exercise is the real path a user takes.
+# The fixture requires "minitest/ractor" the way a test_helper would, which is the whole of how
+# this plugin gets registered: Minitest.run never calls load_plugins, so there is no discovery to
+# simulate. What these exercise is the real path a user takes.
 class TestPluginIntegration < Minitest::Test
   FIXTURE        = File.expand_path "../../fixtures/plugin_suite.rb", __dir__
   UNPARALLELISED = File.expand_path "../../fixtures/unparallelised_suite.rb", __dir__
@@ -53,11 +53,8 @@ class TestPluginIntegration < Minitest::Test
   # THE GUARANTEE. The fixture requires this gem, the way a test_helper would, and then runs
   # without asking for Ractors. Nothing may change: same executor, same place, no inventory.
   #
-  # On minitest 5 this test was about something stronger — load_plugins required every installed
-  # gem's plugin file on every run, so merely INSTALLING this could have hijacked suites that had
-  # never heard of it. Minitest 6 dropped that, so the risk is now only to people who asked for
-  # the gem by name. It still must not surprise them: wanting Ractors in CI is not the same as
-  # wanting them on every run.
+  # The people at risk are the ones who asked for this gem by name, and they are exactly the ones
+  # it must not surprise: wanting Ractors in CI is not the same as wanting them on every run.
   def test_requiring_the_gem_does_not_hijack_a_suite
     output, status = run_suite
 
