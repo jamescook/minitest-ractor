@@ -161,8 +161,7 @@ class TestExecutor < Minitest::Test
 
   # Minitest re-raises PASSTHROUGH_EXCEPTIONS instead of recording them, so they escape #run and
   # used to kill the worker outright. The result was never sent, and shutdown waited on
-  # @outstanding for a result that could never arrive — the pool hung forever. Measured in
-  # probes/worker_death.rb, which sat there until this was fixed.
+  # @outstanding for a result that could never arrive — the pool hung forever.
   #
   # A hang is the worst failure available: CI kills it an hour later with no output, so nobody
   # even learns which test did it. An error recorded against the test that caused it is worth
@@ -191,7 +190,7 @@ class TestExecutor < Minitest::Test
   # used to die there with its job still outstanding, and shutdown waited forever.
   #
   # Only the foreign metadata is dropped, so the test's actual verdict still gets home. Measured
-  # in probes/unsendable_failure.rb, which hung before this.
+  # and it hung the pool the same way a dead worker did.
   def test_a_result_carrying_something_unsendable_still_arrives
     run_jobs %w[test_puts_a_proc_in_its_metadata], klass: UnsendableFixture
 

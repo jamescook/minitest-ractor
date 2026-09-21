@@ -10,9 +10,10 @@ module Minitest
     # from a single memoised class ivar, and the inventory is organised by cause because the
     # cause is what somebody actually fixes: report by cause, never by test.
     #
-    # EVERY PATTERN HERE WAS MEASURED, by probes/isolation_error_census.rb, which provokes each
-    # refusal and prints what Ruby says. Re-run it against a new Ruby rather than trusting this
-    # file — the wording is not documented anywhere and nothing will warn us when it changes.
+    # EVERY PATTERN HERE WAS MEASURED by provoking the refusal and recording what Ruby said. The
+    # wording is documented nowhere and nothing will warn us when it changes, so the test suite
+    # provokes all of them from live Ractors rather than asserting on remembered text: if Ruby
+    # rewords a refusal, the suite fails instead of the classifier going quietly blind.
     #
     # Two results from that census shape the whole class:
     #

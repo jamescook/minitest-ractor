@@ -144,7 +144,7 @@ class TestCause < Minitest::Test
   # The brief's one explicit demand on the report: a C extension that refuses must surface as ONE
   # cause, not hundreds. Ractor::UnsafeError names nothing, and its first frame is the CALLER's
   # line carrying the refusing method's name — so identifying it by the frame makes one unsafe
-  # extension into one cause per call site. Measured in probes/unsafe_method_grouping.rb.
+  # extension into one cause per call site: four call sites gave four causes when measured.
   #
   # Uses a real refusal rather than a built one, and says so when it cannot get one: most stdlib
   # C extensions have been made Ractor-safe and Fiddle may follow, at which point this needs a
@@ -175,7 +175,7 @@ class TestCause < Minitest::Test
 
   # The advice has to differ, and getting it uniform would be worse than saying nothing: a class
   # ivar holding a shareable value IS readable from a worker, while a class variable holding one
-  # is still refused. Measured in probes/isolation_error_census.rb.
+  # is still refused. Measured, and this test provokes both from live Ractors to keep it so.
   def test_the_remedy_offers_make_shareable_only_where_it_would_actually_work
     ivar     = Cause.from(refusal { UnshareableIvar.read })
     constant = Cause.from(refusal { UNSHAREABLE_CONSTANT.first })

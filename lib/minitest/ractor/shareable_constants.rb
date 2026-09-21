@@ -8,11 +8,12 @@ module Minitest
     # Ractor can reach neither. Until they are shareable a test cannot run in a worker at all, or
     # can run but cannot report what happened to it.
     #
-    # THIS LIST WAS THREE NAMES ONCE, and that was wrong. Three is what a single trivial test
-    # reaches; a real suite of 3400 reached five more, and the missing ones did not announce
-    # themselves — one of them quietly replaced every failure's true cause with its own. So the
-    # list below comes from probes/minitest_census.rb, which walks the whole namespace instead
-    # of being remembered. Re-run it against a new Minitest rather than trusting this file.
+    # A MISSING NAME DOES NOT ANNOUNCE ITSELF, which is why the list below was derived by walking
+    # Minitest's whole namespace and not by noting down what a test happened to reach. The failure
+    # mode is not a constant going unpatched and something breaking loudly: one of these can
+    # replace a failure's true cause with its own, and then every finding above it is wrong while
+    # looking perfectly reasonable. Walk the namespace again on a new Minitest rather than
+    # trusting this file.
     #
     # This patches Minitest in place, which is not done lightly. It is done because the
     # alternative is waiting on an upstream change that may never come, and nothing here depends
@@ -36,7 +37,7 @@ module Minitest
       # a worker. Everything else is skipped when absent: Spec is only loaded if asked for.
       REQUIRED = "Minitest::Test"
 
-      # Left alone deliberately, though the census finds them unshareable too:
+      # Left alone deliberately, though they are unshareable too:
       #
       #   Minitest @parallel_executor  us. A worker must never reach the thing scheduling it.
       #   Minitest::Test @io_lock      a Mutex, which cannot be made shareable by anything.
@@ -88,7 +89,7 @@ module Minitest
       # The rule is narrower than "a Ractor may not touch class ivars", which is how it is
       # usually repeated. A worker may read an instance variable of a class or module perfectly
       # well — what it may not do is get an UNSHAREABLE value out of one, or write one at all.
-      # probes/ractor_module_ivar.rb is the demonstration.
+      # Measured, not inferred from the docs, which do not draw that distinction.
       def self.patched
         @patched ||= ::Ractor.make_shareable({})
       end
@@ -110,9 +111,9 @@ module Minitest
           return :absent unless owner_name == REQUIRED
 
           raise MissingConstant,
-                "#{owner_name}::#{name} is gone. This Minitest (#{::Minitest::VERSION}) is not " \
-                "one minitest-ractor knows how to patch; re-run probes/minitest_census.rb to " \
-                "find the names it needs now."
+                "#{owner_name}::#{name} is missing. minitest-ractor cannot make Minitest " \
+                "#{::Minitest::VERSION} safe for a worker to use. Open an issue and include " \
+                "this message."
         end
 
         value = owner.const_get name, false
@@ -129,7 +130,7 @@ module Minitest
       # replaces the real one. Left unpatched it does not merely add failures, it hides them.
       #
       # A frozen BacktraceFilter is enough: #filter reads $DEBUG and ENV["MT_DEBUG"], and a
-      # worker may read both (probes/minitest_filter_in_worker.rb).
+      # worker may read both. Measured — neither is one of the globals a worker is refused.
       def self.share_backtrace_filter
         filter = ::Minitest.backtrace_filter
         return :absent if filter.nil?

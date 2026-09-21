@@ -56,8 +56,8 @@ module Minitest
       # hour later with no output at all. Minitest re-raises PASSTHROUGH_EXCEPTIONS —
       # NoMemoryError, SignalException, Interrupt, SystemExit — instead of recording them, so
       # they come straight out of #run, kill the worker, and the result is never sent. The main
-      # Ractor then waits on @outstanding for a result that can never arrive. Measured in
-      # probes/worker_death.rb, which hung until this existed.
+      # Ractor then waits on @outstanding for a result that can never arrive. Measured: without
+      # this, a test raising one of them hung the pool for ever.
       #
       # So anything that escapes is recorded against the test it escaped from and the worker
       # carries on. That is a deliberate narrowing of Minitest's behaviour: an `exit` inside a
@@ -89,7 +89,8 @@ module Minitest
       # that is a docstring, not a check, and a Result holding a Proc there is an ordinary object
       # graph rather than an exception — so it is not neutered, the send raises "allocator
       # undefined for Proc", the worker dies with its job still outstanding, and shutdown waits
-      # for a result that can never arrive. Measured in probes/unsendable_failure.rb.
+      # for a result that can never arrive. Measured, and it hung the pool exactly like a dead
+      # worker did.
       #
       # So: try it, then try again without the metadata this gem did not put there, and failing
       # that send a result that says what happened. Losing one test's metadata is a small price;

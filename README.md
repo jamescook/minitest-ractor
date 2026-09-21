@@ -24,9 +24,9 @@ Ruby 4.x only. There is no 3.x fallback and there will not be one.
 
 **Green means no shared mutable state was reached _by these tests_.**
 
-It says nothing about code the suite never ran. A branch no test covers could hold a memoised
-class variable and this will never notice. The claim is real but narrow, so repeat it with the
-limit attached — the limit is the half people drop.
+You can only prove Ractor-safety as far as your test coverage reaches. A branch no test covers
+could hold a memoised class variable and this will never notice it, so your coverage is the
+ceiling on what a green run is worth.
 
 ## Install
 
@@ -90,10 +90,10 @@ is a suite quietly narrowing what it proves. The switch is per class, not per te
 registration is a whole unit, and a per-test switch would invite marking one test to hide a
 problem its siblings share.
 
-## Auditing a suite you have not prepared
+## Running it without changing the suite
 
-The other way in, and the one to reach for when the suite is not yours. No `parallelize_me!`,
-no Gemfile entry, no edits of any kind:
+The other way in, skipping the setup above: no `parallelize_me!`, no Gemfile entry, no edits of
+any kind. It works on any Minitest suite, yours or somebody else's:
 
 ```bash
 minitest-ractor -I lib -I test test/
@@ -173,7 +173,7 @@ your code, a gem, Ruby itself — and *who owns the line that reached it*. A wor
 `RbConfig::CONFIG` from your own file is refused at **your** line, so the backtrace alone would
 call it yours and send you off to freeze the standard library.
 
-Everything below was measured on Ruby 4.0.7 by `probes/escape_hatches.rb`.
+Everything below was measured on Ruby 4.0.7.
 
 ### Yours to fix
 
@@ -304,6 +304,49 @@ there because nothing is shared: each worker mutates its own copy and never noti
 survives the suite that was meant to find it.
 
 A Ractor has no copy to fall back on. It refuses, and the refusal is the finding.
+
+## What it patches, and what that costs you
+
+Three things here reach past a public API. Each is confined to one file, and each will break on
+some future Minitest — so they are listed rather than buried.
+
+**It freezes ten of Minitest's own constants.** A worker cannot reach a mutable object another
+Ractor can see, and Minitest keeps several in constants — `PASSTHROUGH_EXCEPTIONS`, `SIGNALS`,
+`SETUP_METHODS` and others — so without this a test cannot run in a worker *at all*. There is no
+API for making somebody else's constants shareable, so `lib/minitest/ractor/shareable_constants.rb`
+replaces each one with a shareable copy via `remove_const` and `const_set`, and does the same for
+`Minitest.backtrace_filter`. Anything already shareable is left alone. Ask what it did on your
+Minitest:
+
+```ruby
+puts Minitest::Ractor::ShareableConstants.report
+```
+
+A missed constant does not announce itself. Rather than a finding going missing, one can replace
+a failure's true cause with its own — so the report names the wrong thing, confidently. That is
+why the list is derived by walking Minitest's namespace rather than kept by hand, and why a
+Minitest without the constants this depends on raises instead of carrying on.
+
+**The standalone runner defeats Minitest's autorun hook.** Requiring a test file requires
+`minitest/autorun`, which installs an `at_exit` that runs the whole suite — so loading files to
+audit them would run everything twice, with Minitest's own summary printed last, on top of the
+report. Minitest guards that hook with a bare class variable and offers no accessor, option or
+environment variable, so the only lever is to claim the hook is already installed:
+
+```ruby
+Minitest.class_variable_set :@@installed_at_exit, true
+```
+
+That is somebody else's private state. It lives in one method, `Audit.silence_autorun!`, and
+nowhere else. It affects only `minitest-ractor` the command; the plugin never touches it.
+
+**The pool owns Ctrl+C while it is running.** Not a patch, but it is process-wide and worth
+knowing: `Executor#start` traps `INT` and `#shutdown` puts the previous handler back. Without it
+Minitest rescues the interrupt and then prints every failure it had collected anyway.
+
+What is *not* on this list: installing the executor and registering the plugin both go through
+documented API — `Minitest.parallel_executor=` and `Minitest.register_plugin`. If this gem breaks
+your suite, those two are not where to look.
 
 ## Non-goals
 
