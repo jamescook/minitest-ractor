@@ -121,6 +121,26 @@ module Minitest
       # The method name out of a backtrace frame: "foo.rb:12:in 'Fiddle::Handle#initialize'".
       METHOD_IN_FRAME = /:in '(?<method>.+)'\s*\z/
 
+      # Kinds whose first frame names the CALL rather than the offence.
+      #
+      # A method built with define_method is a Proc, and Ruby refuses it at whatever line invoked
+      # it. Measured: calling one directly reports the caller's line, and calling it from another
+      # method reports that method's line. The define_method itself never appears.
+      #
+      # That matters because when the refused method is a TEST method, the caller is always
+      # minitest — so the frame said minitest/test.rb:91 for every such test in a suite, which
+      # made them all one cause however many files they came from, gave them a gem's provenance,
+      # and told people a Proc in their own test file was not theirs to fix. Found by auditing a
+      # real suite, where all eight of these came from two define_method calls in one file.
+      #
+      # Minitest records source_location on every Result, which for a define_method'd method IS
+      # the block's own line, so the definition site is available and exact.
+      #
+      # Only used when the frame is outside the project. A define_method'd HELPER called from an
+      # ordinary test already reports a frame in the test's own file, and that is a truer location
+      # than the test's definition — substituting there would make things worse.
+      LOCATED_AT_THE_CALL = %i[unshareable_proc].freeze
+
       # Kinds whose identity is the method named in the first frame rather than the frame itself.
       #
       # Ractor::UnsafeError names nothing in its message, and its first frame is the CALLER's
@@ -139,15 +159,27 @@ module Minitest
       # the wording is unrecognised, because an unknown refusal is still a refusal and silence is
       # the worst outcome. Any other exception class is a finding ONLY if its message matches a
       # pattern we measured, because ArgumentError usually means somebody's test is wrong.
-      def self.from(error)
+      # defined_at is where the test that hit this was written, which the classifier gets from the
+      # Result. Only some kinds can use it — see LOCATED_AT_THE_CALL.
+      def self.from(error, defined_at: nil)
         return nil if error.nil?
 
         message = error.message.to_s
         kind, match = match_for(message)
         return nil unless kind || error.is_a?(::Ractor::Error)
 
-        new(kind: kind || :unknown, match:, message:, origin: Array(error.backtrace).first)
+        kind ||= :unknown
+        new(kind:, match:, message:, origin: origin_for(kind, error, defined_at))
       end
+
+      def self.origin_for(kind, error, defined_at)
+        frame = Array(error.backtrace).first
+        return frame unless LOCATED_AT_THE_CALL.include? kind
+        return frame if defined_at.nil? || Provenance.editable?(frame)
+
+        defined_at
+      end
+      private_class_method :origin_for
 
       def self.match_for(message)
         PATTERNS.each do |kind, pattern|

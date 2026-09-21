@@ -256,6 +256,50 @@ class TestCause < Minitest::Test
     assert_includes cause.remedy, "rb_ext_ractor_safe"
   end
 
+  # THE TWO EDGES of substituting the definition site for the frame. The message is Ruby's own,
+  # taken from a real refusal; only the backtrace is written by hand, because reproducing "called
+  # from inside a gem" needs a gem, and what is under test is which location wins.
+  class ProcBuilt
+    define_method(:refused) { :ok }
+  end
+
+  IN_A_GEM = "#{Gem.default_dir}/gems/minitest-6.0.6/lib/minitest/test.rb:91:in 'block in run'".freeze
+
+  def proc_refusal
+    refusal { ProcBuilt.new.refused }
+  end
+
+  def test_a_proc_refused_inside_a_gem_takes_the_definition_site_instead
+    error = proc_refusal
+    error.set_backtrace [IN_A_GEM]
+
+    cause = Cause.from error, defined_at: "test/some_test.rb:12"
+
+    assert_equal "test/some_test.rb:12", cause.origin
+    assert_equal :yours, cause.tier
+  end
+
+  # A define_method'd HELPER called from an ordinary test already reports a frame in the test's
+  # own file, which is a truer location than the test's definition. Substituting there would move
+  # a correct answer to a worse one.
+  def test_a_proc_refused_in_your_own_code_keeps_the_frame_it_came_with
+    cause = Cause.from proc_refusal, defined_at: "test/somewhere_else.rb:99"
+
+    assert_includes cause.origin, "test_cause.rb"
+    refute_equal "test/somewhere_else.rb:99", cause.origin
+  end
+
+  # proc_isolation reports at Ractor.new, which is the line somebody wrote, so the frame is
+  # already right. Measured before excluding it: the proc's own definition never appears, but
+  # neither does anything belonging to minitest.
+  def test_proc_isolation_is_left_on_its_own_frame
+    outer = +"captured"
+    cause = Cause.from refusal { outer }, defined_at: "test/somewhere_else.rb:99"
+
+    assert_equal :proc_isolation, cause.kind
+    refute_equal "test/somewhere_else.rb:99", cause.origin
+  end
+
   # An unrecognised refusal keeps its own answer whatever the tier. "We do not know what this is"
   # is worth more than confident instructions about something we could not identify.
   def test_an_unrecognised_refusal_keeps_its_own_remedy

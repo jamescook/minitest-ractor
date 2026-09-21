@@ -7,6 +7,7 @@ require "recording_reporter"
 require "fixtures/crossing_test"
 require "fixtures/unsafe_test"
 require "fixtures/masked_test"
+require "fixtures/proc_test"
 
 class TestClassifier < Minitest::Test
   Classifier = Minitest::Ractor::Classifier
@@ -151,5 +152,47 @@ class TestClassifier < Minitest::Test
     counts = Classifier.by_cause(results).map { |_, found| found.size }
 
     assert_equal [2, 1], counts
+  end
+
+  # A TEST BUILT WITH define_method, which is how a suite writes one test over a list of inputs.
+  # Found by auditing a real suite, where every claim the report made about it was false.
+  #
+  # Ruby reports this refusal at the line that CALLED the method, and for a test method the
+  # caller is minitest. So the frame is minitest/test.rb:91 — a gem — and the finding was tiered
+  # as nobody's to fix, with a remedy saying the Proc belonged to a gem. It belongs to whoever
+  # wrote the define_method, it is one line from fixed, and this gem's own README says how.
+  #
+  # Run through the executor rather than built, because minitest has to be the caller for the
+  # refusal to have the shape that was getting it wrong.
+  def test_a_test_built_with_define_method_is_located_at_the_define_method
+    finding = Classifier.classify results_for(ProcFixture, %w[test_built_with_a_proc]).first
+
+    refute_nil finding
+    assert_equal :unshareable_proc, finding.cause.kind
+    assert_includes finding.cause.origin, "fixtures/proc_test.rb"
+    refute_includes finding.cause.origin, "minitest/test.rb", "the caller is not the offence"
+  end
+
+  def test_a_test_built_with_define_method_is_the_projects_to_fix
+    cause = Classifier.classify(results_for(ProcFixture, %w[test_built_with_a_proc]).first).cause
+
+    assert_equal :yours, cause.tier
+    assert_includes cause.remedy, "Ractor.shareable_proc"
+    refute_includes cause.remedy, "belongs to a gem"
+  end
+
+  # The other half, and the half that hides: keyed on the frame, EVERY define_method'd test in a
+  # suite is one cause, because they all share minitest's line. Two files, two fixes, one entry.
+  def test_two_define_method_calls_are_two_causes
+    results = results_for ProcFixture, %w[test_built_with_a_proc test_built_with_another_proc]
+
+    assert_equal 2, Classifier.by_cause(results).size,
+                 "two definition sites are two things to fix"
+  end
+
+  def test_an_ordinary_method_in_the_same_class_is_not_a_finding
+    results = results_for ProcFixture, %w[test_written_the_ordinary_way]
+
+    assert_nil Classifier.classify(results.first)
   end
 end

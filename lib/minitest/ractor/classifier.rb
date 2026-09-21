@@ -26,11 +26,12 @@ module Minitest
       def self.classify(result)
         return nil unless result.respond_to?(:failures)
 
-        cause = refusal_in(result)
+        defined_at = written_at(result)
+        cause      = refusal_in(result, defined_at)
         return nil unless cause
 
         Finding.new(cause:, klass: result.klass, name: result.name, origin: cause.origin,
-                    defined_at: written_at(result))
+                    defined_at:)
       end
 
       # Minitest records `o.method(o.name).source_location` on every Result, and falls back to
@@ -77,9 +78,9 @@ module Minitest
       # skip is still the tool finding shared mutable state, and papering over it here would be
       # the exact thing this gem exists to stop. A passing result has no failures and so yields
       # nothing of its own accord.
-      def self.refusal_in(result)
+      def self.refusal_in(result, defined_at = nil)
         result.failures.each do |failure|
-          deepest = ErrorChain.of(failure).filter_map { |error| Cause.from error }.last
+          deepest = ErrorChain.of(failure).filter_map { |error| Cause.from error, defined_at: }.last
           return deepest if deepest
         end
         nil
