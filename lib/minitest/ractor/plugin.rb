@@ -155,18 +155,18 @@ module Minitest
 
         reason = if threads && threads.to_i <= 1
                    <<~CPU
-                     #{THREADS}=#{threads} switched minitest's parallel executor off before your
-                     test files loaded, so parallelize_me! found nothing to register with and did
-                     nothing. Asking for --ractor afterwards cannot undo that. Use the environment
-                     variable, which is read early enough to get in front of it:
+                     #{THREADS}=#{threads} disabled the minitest parallel executor before your
+                     test files loaded. Thus parallelize_me! did nothing. The --ractor option
+                     cannot correct this, because minitest reads the option too late. Use the
+                     environment variable. Minitest reads it before the test files load:
 
                          #{THREADS}=#{threads} #{OPT_IN}=1 <your test command>
                    CPU
                  else
                    <<~PARALLELIZE
-                     No test class has a parallel run order, which usually means none of them
-                     calls parallelize_me!. Minitest hands a class to the parallel executor only
-                     once it has:
+                     No test class has a parallel run order. Usually this means that no class
+                     calls parallelize_me!. Minitest sends a class to the parallel executor only
+                     after the class calls it:
 
                          class Minitest::Test
                            parallelize_me!
@@ -174,7 +174,8 @@ module Minitest
                    PARALLELIZE
                  end
 
-        "#{reason}\nRefusing to run rather than report a passing suite that proved nothing."
+        "#{reason}\nminitest-ractor stopped the run. A suite that passes without a proof is " \
+          "worse than a suite that did not run."
       end
 
       private_class_method :truthy?, :nothing_can_reach_a_ractor

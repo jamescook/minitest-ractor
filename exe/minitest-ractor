@@ -24,8 +24,8 @@ options = {}
 parser = OptionParser.new do |opts|
   opts.banner = "Usage: minitest-ractor [options] <file-or-directory>..."
   opts.separator ""
-  opts.separator "Runs a Minitest suite in a pool of Ractors and reports what is not"
-  opts.separator "Ractor-safe. The suite needs no changes and no parallelize_me!."
+  opts.separator "Runs a Minitest suite in a pool of Ractors. Reports the code that is"
+  opts.separator "not Ractor-safe. The suite needs no changes and no parallelize_me!."
   opts.separator ""
 
   # Without this almost no real suite loads: test files require "test_helper", which is only
@@ -80,8 +80,8 @@ end
 # Ractors and must not be counted as one, but a suite audited with a tenth of it missing is a
 # different claim from one audited whole, and the reader needs that before the numbers.
 unless audit.load_failures.empty?
-  $stderr.puts "minitest-ractor: #{audit.load_failures.size} file(s) would not load, " \
-               "and were not audited:"
+  $stderr.puts "minitest-ractor: did not audit #{audit.load_failures.size} file(s). " \
+               "These files did not load:"
   audit.load_failures.each { |file, why| $stderr.puts "  #{file}\n    #{why}" }
   $stderr.puts
 end

@@ -70,7 +70,7 @@ module Minitest
       # which is the same refusal the plugin's pre-flight makes for the same reason.
       def run
         loaded = load_files
-        raise NothingToRun, "no test files under #{@paths.join(', ')}" if loaded.empty?
+        raise NothingToRun, "found no test files under #{@paths.join(', ')}" if loaded.empty?
 
         # Before anything asks a class what tests it has, because runnable_methods srands with
         # the seed and it is nil until something sets it. Nothing has, since this never goes
@@ -78,7 +78,7 @@ module Minitest
         ::Minitest::Ractor.seed! @seed
 
         jobs = jobs_in suites
-        raise NothingToRun, "loaded #{loaded.size} files but found no tests" if jobs.empty?
+        raise NothingToRun, "loaded #{loaded.size} files. Found no tests in them." if jobs.empty?
 
         Inventory.from dispatch(jobs), limit: @limit
       end

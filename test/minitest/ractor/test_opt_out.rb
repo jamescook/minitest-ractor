@@ -83,7 +83,9 @@ class TestOptOut < Minitest::Test
     report = Minitest::Ractor::Inventory.from(results).to_s
 
     assert_includes report, "1 of 3 tests ran in Ractors"
-    assert_includes report, "2 asked not to"
+    # Matched across whitespace because the report folds to 92 columns and this sentence lands
+    # on the wrap.
+    assert_match(/2 tests used\s+runs_on_the_main_ractor!/, report)
   end
 
   # An opt-out is not a test the pool failed to reach, and the report must not read as though a
@@ -92,7 +94,7 @@ class TestOptOut < Minitest::Test
     report = Minitest::Ractor::Inventory.from(run_jobs(OptedOutFixture,
                                                        %w[test_registers_something])).to_s
 
-    refute_includes report, "without asking"
+    refute_includes report, "did not ask to"
   end
 
   # A suite where EVERY class opted out proves nothing, and saying "add parallelize_me!" there

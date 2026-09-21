@@ -103,7 +103,7 @@ class TestCause < Minitest::Test
 
     assert_equal :unknown, cause.kind
     assert_includes cause.message, "wording Ruby does not use yet"
-    assert_includes cause.remedy, "does not recognise"
+    assert_includes cause.remedy, "does not recognize the message"
   end
 
   # The asymmetry, second direction. Counting an ordinary failure as a finding corrupts the
@@ -182,10 +182,10 @@ class TestCause < Minitest::Test
     cvar     = Cause.from(refusal { ClassVariable.read })
     global   = Cause.from(refusal { $test_cause_global }) # rubocop:disable Style/GlobalVars
 
-    assert_includes ivar.remedy, "make_shareable"
-    assert_includes constant.remedy, "make_shareable"
-    assert_includes cvar.remedy, "will not help"
-    assert_includes global.remedy, "will not help"
+    assert_includes ivar.remedy, "Ractor.make_shareable"
+    assert_includes constant.remedy, "Ractor.make_shareable"
+    assert_includes cvar.remedy, "does not help"
+    assert_includes global.remedy, "does not help"
   end
 
   # The bead's first design note: do not tell somebody they cannot memoise on a class. Often they
@@ -193,7 +193,74 @@ class TestCause < Minitest::Test
   def test_the_remedy_for_a_readable_ivar_does_not_condemn_memoisation
     remedy = Cause.from(refusal { UnshareableIvar.read }).remedy
 
-    assert_includes remedy, "MAY read"
-    assert_includes remedy, "does not have to go"
+    assert_includes remedy, "A worker can read a class or module instance variable"
+    assert_includes remedy, "The memoization is not the problem"
+  end
+
+  # TIERS. What somebody can do about a finding is a different question from what went wrong, and
+  # the report used to answer only the second one — telling people to freeze constants belonging
+  # to the standard library and to delete class variables belonging to minitest.
+
+  def test_a_finding_in_your_own_code_is_yours_to_fix
+    assert_equal :yours, Cause.from(refusal { UnshareableIvar.read }).tier
+    assert_equal :yours, Cause.from(refusal { UNSHAREABLE_CONSTANT.first }).tier
+  end
+
+  # THE CASE THIS WAS BUILT FOR, and the one the backtrace alone gets wrong. The refusal is raised
+  # at the line in THIS file that reads the constant, so going by the frame would call it ours and
+  # advise freezing RbConfig's strings on behalf of every other library in the process.
+  def test_somebody_elses_constant_read_from_your_line_gets_a_workaround
+    cause = Cause.from(refusal { RbConfig::CONFIG["host"] })
+
+    assert_equal :ruby, cause.owned_by, "the constant belongs to ruby even though the line is ours"
+    assert_equal :theirs, cause.tier
+    assert_includes cause.remedy, "copy: true"
+    refute_includes cause.remedy, "where you assign it", "we cannot assign somebody else's constant"
+  end
+
+  # Ruby's own globals, for the same reason: $LOAD_PATH was the largest single cause in one real
+  # suite, and "Remove the global variable" is not something anybody can do about $LOAD_PATH.
+  def test_rubys_own_global_gets_a_workaround_and_not_an_order_to_delete_it
+    cause = Cause.from(refusal { $LOAD_PATH.first })
+
+    assert_equal :theirs, cause.tier
+    assert_includes cause.remedy, "copy: true"
+    refute_includes cause.remedy, "Remove the global variable"
+  end
+
+  def test_your_own_global_is_still_yours_to_remove
+    cause = Cause.from(refusal { $test_cause_global }) # rubocop:disable Style/GlobalVars
+
+    assert_equal :yours, cause.tier
+    assert_includes cause.remedy, "Remove the global variable"
+  end
+
+  # Neither the class variable nor the line that reaches it is ours, so there is nothing to
+  # suggest except keeping it out of the pool.
+  def test_a_class_variable_in_somebody_elses_code_can_be_fixed_by_nobody
+    cause = Cause.from(refusal { ::Minitest::Runnable.runnables })
+
+    assert_equal :nobodys, cause.tier
+    assert_includes cause.remedy, "runs_on_the_main_ractor!"
+    refute_includes cause.remedy, "Remove the class variable"
+  end
+
+  # Always tier 3, whoever wrote the line that reached it: the fix is in C, in somebody else's
+  # Init_ function, and no amount of editing Ruby changes that.
+  def test_a_refusing_c_extension_is_nobodys_to_fix_even_from_your_own_line
+    cause = Cause.from(unsafe_method_refusal { Fiddle::Handle.new })
+
+    skip "Fiddle no longer refuses; find another Ractor-unsafe extension" if cause.nil?
+
+    assert_equal :nobodys, cause.tier
+    assert_includes cause.remedy, "rb_ext_ractor_safe"
+  end
+
+  # An unrecognised refusal keeps its own answer whatever the tier. "We do not know what this is"
+  # is worth more than confident instructions about something we could not identify.
+  def test_an_unrecognised_refusal_keeps_its_own_remedy
+    cause = Cause.new kind: :unknown, message: "something new", origin: "#{Gem.default_dir}/x.rb:1"
+
+    assert_includes cause.remedy, "does not recognize the message"
   end
 end

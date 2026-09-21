@@ -1,5 +1,7 @@
 # frozen_string_literal: true
 
+require_relative "provenance"
+
 module Minitest
   module Ractor
     # The underlying reason a piece of code is not Ractor-safe, identified from Ruby's own words.
@@ -50,34 +52,71 @@ module Minitest
       # well, so "make the value shareable" is a genuine one-line fix there. A class variable or
       # a global is refused even when its value is shareable — measured, not assumed — so the
       # same advice there would send somebody to freeze something that was never going to help.
+      #
+      # WRITTEN IN SIMPLIFIED TECHNICAL ENGLISH (ASD-STE100), and so is every other string this
+      # gem prints. Short sentences, active voice, one instruction each, the imperative for
+      # instructions, and one word for one thing throughout — a worker is always a worker. The
+      # narrative voice of the comments stops at the quotation mark: a comment is read once by
+      # somebody with time, and a remedy is read by somebody who has just watched two thousand
+      # tests fail and wants to know what to change.
       REMEDIES = {
-        ivar_read: "A worker MAY read a class or module instance variable. What it may not do " \
-                   "is get an unshareable value out of one. So the memoisation is not the " \
-                   "problem and usually does not have to go: make the value shareable where it " \
-                   "is assigned, with Ractor.make_shareable. Only a value that has to stay " \
-                   "mutable forces a redesign.",
-        ivar_write: "A worker may not WRITE a class or module instance variable at all, " \
-                    "shareable value or not, so make_shareable will not help here. Either warm " \
-                    "it in the main Ractor before the run, or move the state onto the instance.",
-        class_variable: "A worker may not read a class variable even when its value is " \
-                        "shareable, so make_shareable will not help. The class variable itself " \
-                        "has to go; a constant holding a shareable value is the usual swap.",
-        constant: "A worker may read a constant whose value is shareable, so this is a one-line " \
-                  "fix: Ractor.make_shareable on the value. Note that freeze alone is not " \
-                  "enough — an Array of unfrozen Strings is frozen and still refused.",
-        global_variable: "A worker may not read an ordinary global even when its value is " \
-                         "shareable, so make_shareable will not help. The global has to go.",
-        unsafe_method: "A C extension that never declared itself Ractor-safe. Nothing can be " \
-                       "done to it from Ruby: it needs a fix upstream, or the tests that reach " \
-                       "it have to stay out of the pool.",
-        proc_isolation: "A Proc given to a Ractor closed over a local variable. Pass the value " \
-                        "in as an argument instead of capturing it.",
-        unshareable_proc: "Something was defined with a Proc that is not shareable and is now " \
-                          "being reached from another Ractor.",
-        unknown: "Ruby refused this and minitest-ractor does not recognise the wording. It is " \
-                 "reported as-is rather than dropped. Please open an issue with the message " \
-                 "below, and re-run probes/isolation_error_census.rb."
+        ivar_read: "A worker can read a class or module instance variable. A worker cannot get " \
+                   "an unshareable value out of one. The memoization is not the problem. Make " \
+                   "the value shareable where you assign it. Use Ractor.make_shareable. If the " \
+                   "value must stay mutable, change the design.",
+        ivar_write: "A worker cannot write a class or module instance variable. This applies to " \
+                    "all values, shareable or not. Ractor.make_shareable does not help. Set the " \
+                    "variable in the main Ractor before the run, or move the state to the " \
+                    "instance.",
+        class_variable: "A worker cannot read a class variable. This applies even when the " \
+                        "value is shareable. Ractor.make_shareable does not help. Remove the " \
+                        "class variable. Usually a constant that holds a shareable value can " \
+                        "replace it.",
+        constant: "A worker can read a constant when the value is shareable. Make the value " \
+                  "shareable: use Ractor.make_shareable where you assign it. Do not use freeze. " \
+                  "A frozen Array of unfrozen Strings is still unshareable.",
+        global_variable: "A worker cannot read a global variable. This applies even when the " \
+                         "value is shareable. Ractor.make_shareable does not help. Remove the " \
+                         "global variable.",
+        unsafe_method: "This C extension is not Ractor-safe. Only the author can change this. " \
+                       "The extension must call rb_ext_ractor_safe(true) in its Init_ function. " \
+                       "You cannot do this from Ruby. Report the problem to the author. To " \
+                       "continue, keep these tests out of the pool: add " \
+                       "runs_on_the_main_ractor! to the test class.",
+        proc_isolation: "This Proc reads a local variable from outside the Proc. A Ractor " \
+                        "cannot isolate such a Proc. Pass the value to the Proc as an argument.",
+        unshareable_proc: "A Proc that is not shareable defined this method. A worker cannot " \
+                          "call it. Use Ractor.shareable_proc, or define the method with a " \
+                          "string class_eval.",
+        unknown: "Ruby refused this access. minitest-ractor does not recognize the message. The " \
+                 "finding is reported without a remedy. Open an issue and include the Ruby " \
+                 "message below."
       }.freeze
+
+      # WHAT SOMEBODY CAN ACTUALLY DO ABOUT IT, which is a different question from what went
+      # wrong and the one that decides whether the advice above is worth printing at all.
+      #
+      #   :yours    the thing is yours. Fix it where it is defined.
+      #   :theirs   the thing is somebody else's, but the line that reached it is yours, so a
+      #             copy taken in the main Ractor can stand in for it.
+      #   :nobodys  neither is yours. Nothing in Ruby changes that.
+      #
+      # TWO QUESTIONS, NOT ONE, and asking only the first is what the report used to get wrong.
+      # It told people to call make_shareable on RbConfig::CONFIG — a constant belonging to the
+      # standard library, which freezing would freeze for every other gem in the process — and
+      # explained how to remove Minitest::Runnable's @@runnables, which is not theirs to remove.
+      TIERS = %i[yours theirs nobodys].freeze
+
+      # Kinds where the refusal is a READ of a value, so a copy can stand in for it. A write has
+      # nothing to copy, and a refusing C extension is a method call rather than a value.
+      SNAPSHOTTABLE = %i[constant global_variable ivar_read class_variable].freeze
+
+      # Kinds where the thing Ruby named can be written down as an expression, so the advice can
+      # show the copy being taken instead of describing it.
+      EXPRESSIBLE = %i[constant global_variable].freeze
+
+      WHOSE = { gem: "a gem", ruby: "Ruby", native: "a C extension",
+                unknown: "another library", project: "your project" }.freeze
 
       # The method name out of a backtrace frame: "foo.rb:12:in 'Fiddle::Handle#initialize'".
       METHOD_IN_FRAME = /:in '(?<method>.+)'\s*\z/
@@ -91,7 +130,7 @@ module Minitest
       # replace. The extension is what somebody fixes, so the extension is the cause.
       IDENTIFIED_BY_METHOD = %i[unsafe_method].freeze
 
-      attr_reader :kind, :variable, :owner, :origin, :message
+      attr_reader :kind, :variable, :owner, :origin, :message, :tier, :owned_by
 
       # Returns nil for anything that is not a refusal — that is an ordinary failure, and turning
       # one into a finding is as damaging as dropping one.
@@ -125,6 +164,8 @@ module Minitest
         @origin   = origin
         @variable = capture(match, :variable) || method_in_origin
         @owner    = capture match, :owner
+        @owned_by = whose_thing_is_it
+        @tier     = tier_for
         freeze
       end
 
@@ -153,8 +194,18 @@ module Minitest
         [@kind, subject || @origin]
       end
 
+      # Advice somebody can act on, which means advice that matches who owns the code.
+      #
+      # An unrecognised refusal keeps its own answer whatever the tier: "we do not know what this
+      # is" is more use than confident instructions about a thing we could not identify.
       def remedy
-        REMEDIES.fetch(@kind, REMEDIES[:unknown])
+        return REMEDIES[:unknown] if @kind == :unknown
+
+        case @tier
+        when :theirs  then snapshot_advice
+        when :nobodys then out_of_reach_advice
+        else REMEDIES.fetch(@kind, REMEDIES[:unknown])
+        end
       end
 
       def to_s
@@ -171,6 +222,70 @@ module Minitest
       end
 
       private
+
+      def tier_for
+        return :nobodys if @kind == :unsafe_method
+        return :yours   if mine? @owned_by
+        return :theirs  if SNAPSHOTTABLE.include?(@kind) && Provenance.editable?(@origin)
+
+        :nobodys
+      end
+
+      # WHERE THE THING IS DEFINED, not where the refusal was raised, and they are routinely
+      # different: a worker reading RbConfig::CONFIG from your own lib/catalogue.rb is refused at
+      # your line. Going by the frame would call that yours and hand you advice about freezing
+      # the standard library.
+      #
+      # When Ruby named nothing there is only the frame, which for a WRITE is the right answer
+      # anyway — you write @x inside the class that owns it.
+      def whose_thing_is_it
+        case @kind
+        when :constant                   then Provenance.of_constant @variable
+        when :ivar_read, :class_variable then Provenance.of_constant @owner
+        when :global_variable            then Provenance.of_global @variable
+        else Provenance.of @origin
+        end
+      end
+
+      # Provenance leans toward "yours" on purpose, and :unknown follows the same lean. Calling
+      # something somebody else's when it was theirs to fix downgrades a finding they could have
+      # acted on; calling it theirs when it was not only makes the advice more hopeful than it
+      # deserved.
+      def mine?(verdict)
+        %i[project unknown].include? verdict
+      end
+
+      # Tier 2. The thing is somebody else's and the line that reached it is yours, so the move
+      # is to stop reading theirs.
+      #
+      # copy: true is the load-bearing word. Without it make_shareable freezes IN PLACE, and you
+      # would be freezing another library's values process-wide on its behalf. Measured: after
+      # taking the copy, RbConfig::CONFIG is still unfrozen and so are its values.
+      def snapshot_advice
+        lead = "#{subject} belongs to #{WHOSE[@owned_by]}. You cannot change the definition. Do " \
+               "not call Ractor.make_shareable on it: that freezes it for every other library " \
+               "in this process. The line that reads it is in your project."
+
+        unless EXPRESSIBLE.include?(@kind)
+          return "#{lead} Read the value in the main Ractor before the run. Then pass the value " \
+                 "to the test."
+        end
+
+        "#{lead} Make your own copy and read the copy: MINE = " \
+          "Ractor.make_shareable(#{@variable}, copy: true). The option copy: true keeps the " \
+          "original unfrozen."
+      end
+
+      # Tier 3. Neither the thing nor the line that reached it is yours, so offering a fix would
+      # cost somebody an afternoon and change nothing.
+      def out_of_reach_advice
+        return REMEDIES[:unsafe_method] if @kind == :unsafe_method
+
+        "#{subject || 'This state'} belongs to #{WHOSE[@owned_by]}. The line that reads it also " \
+          "belongs to #{WHOSE[@owned_by]}. You cannot change either one. Keep these tests out " \
+          "of the pool: add runs_on_the_main_ractor! to the test class. As an alternative, " \
+          "read the state in the main Ractor before the run."
+      end
 
       def capture(match, name)
         return nil unless match&.names&.include?(name.to_s)

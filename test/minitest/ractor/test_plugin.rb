@@ -76,7 +76,7 @@ class TestPlugin < Minitest::Test
     end
 
     assert_match(/MT_RACTOR=1/, error.message, "the error has to name the fix")
-    assert_match(/proved nothing|never attempted|Refusing/, error.message)
+    assert_match(/stopped the run|without a proof/, error.message)
   end
 
   # ...and the same situation is fine once the env var got in first, because then the pool was

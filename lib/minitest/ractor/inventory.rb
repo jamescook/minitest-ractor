@@ -23,6 +23,15 @@ module Minitest
       DEFAULT_LIMIT = 20
       EXAMPLES = 3
 
+      # The tier rides on the advice, because that is where it changes what somebody does next.
+      # Three findings you can fix and three you cannot are the same number and a different
+      # afternoon, and a report that does not say which is which sends people to edit gems.
+      TIER_LABELS = {
+        yours: "What to do:",
+        theirs: "What to do (not your code, so this is a workaround):",
+        nobodys: "What to do (nothing here can be fixed from Ruby):"
+      }.freeze
+
       attr_reader :findings, :ordinary_failures, :total, :reached_workers, :opted_out
 
       def self.from(results, limit: DEFAULT_LIMIT)
@@ -114,7 +123,7 @@ module Minitest
          "",
          *indent("Ruby said:", cause.message.to_s.lines.first.to_s.strip),
          "",
-         *indent("What to do:", cause.remedy),
+         *indent(TIER_LABELS.fetch(cause.tier, TIER_LABELS[:yours]), cause.remedy),
          "",
          *reached_by(found)].join("\n")
       end
@@ -130,7 +139,7 @@ module Minitest
       # fix lives at that line. When Ruby named nothing, the location IS the identity.
       def locator(cause)
         where = relative(cause.origin)
-        where += "  (inside #{Provenance.of(cause.origin)} code, not yours)" unless
+        where += "  (#{Provenance.of(cause.origin)} code, which you cannot change)" unless
           Provenance.editable?(cause.origin)
 
         cause.named? ? "first seen at #{where}" : "at #{where}"
@@ -177,9 +186,9 @@ module Minitest
         ["",
          *coverage,
          "",
-         *wrap("Every finding below is Ruby refusing a worker access to state another Ractor " \
-               "can see. They are grouped by cause, because the cause is what you fix: one " \
-               "cause is one change, however many tests tripped over it.", WIDTH)]
+         *wrap("Each finding below is one refusal. Ruby refused to let a worker touch state " \
+               "that another Ractor can see. This report groups the findings by cause. One " \
+               "cause is one change, even when many tests reached it.", WIDTH)]
       end
 
       # Printed every run, because it IS the scope of the proof. A suite of mixed parallel and
@@ -194,13 +203,14 @@ module Minitest
       # if it grows, somebody is silencing findings with it.
       def coverage(clause = nil)
         line = "#{@reached_workers} of #{count(@total, 'test')} ran in Ractors#{clause}."
-        line += " #{@opted_out} asked not to." if @opted_out.positive?
+        line += " #{count(@opted_out, 'test')} used runs_on_the_main_ractor!." if
+          @opted_out.positive?
 
         unaccounted = @total - @reached_workers - @opted_out
         return wrap(line, WIDTH) unless unaccounted.positive?
 
-        wrap("#{line} The other #{unaccounted} ran in the main Ractor without asking, so the " \
-             "proof says nothing about them.", WIDTH)
+        wrap("#{line} The other #{count(unaccounted, 'test')} ran in the main Ractor and did " \
+             "not ask to. This report proves nothing about that code.", WIDTH)
       end
 
       # The rest, one line each, rather than a count of things withheld.
@@ -233,14 +243,12 @@ module Minitest
       def ordinary_note
         return [] if @ordinary_failures.zero?
 
-        verb = @ordinary_failures == 1 ? "is" : "are"
-
         ["",
          "-" * WIDTH,
-         *wrap("#{count(@ordinary_failures, 'ordinary failure')} #{verb} not listed above. A " \
-               "test that failed for reasons unrelated to Ractors is counted here and nowhere " \
-               "else: mixing those in with findings would make every number above worthless.",
-               WIDTH)]
+         *wrap("This report does not list #{count(@ordinary_failures, 'ordinary failure')}. An " \
+               "ordinary failure is a test that failed for a reason that is not related to " \
+               "Ractors. The report counts these failures here only. It does not add them to " \
+               "the findings above.", WIDTH)]
       end
 
       # A green run is the product, so it is worth saying properly — including the limit, which
@@ -252,8 +260,8 @@ module Minitest
          "",
          *coverage(", and none of them reached shared mutable state"),
          "",
-         *wrap("The proof is narrow on purpose. It covers the code THESE TESTS REACHED and says " \
-               "nothing about code they did not.", WIDTH),
+         *wrap("The proof is limited. It applies only to the code that THESE TESTS REACHED. It " \
+               "says nothing about code that they did not reach.", WIDTH),
          *ordinary_note].join("\n")
       end
 
@@ -267,8 +275,8 @@ module Minitest
       def nothing_attempted
         [*heading("NO PROOF — nothing reached a Ractor"),
          "",
-         *wrap("#{count(@total, 'test')} ran and not one of them left the main Ractor, so " \
-               "nothing here was tested for isolation. This is not a pass.", WIDTH),
+         *wrap("#{count(@total, 'test')} ran. No test left the main Ractor. This run tested no " \
+               "code for isolation. THIS IS NOT A PASS.", WIDTH),
          "",
          *wrap(why_nothing_ran, WIDTH),
          *parallelize_me_snippet,
@@ -290,13 +298,13 @@ module Minitest
       # cannot help.
       def why_nothing_ran
         if everything_opted_out?
-          "Every one of them said runs_on_the_main_ractor!. That is a legitimate thing for a " \
-            "test about global state to say, but a suite where they ALL say it proves nothing " \
-            "at all, and the opt-out is worth revisiting rather than the report."
+          "Every test class used runs_on_the_main_ractor!. A test about global state can do " \
+            "this correctly. But a suite where all classes do this proves nothing. Examine the " \
+            "opt-outs, not this report."
         else
-          "Minitest only routes a class through the parallel executor once it has called " \
-            "parallelize_me!. Add it to the test classes you want covered, or to " \
-            "Minitest::Test itself to cover everything:"
+          "Minitest sends a class to the parallel executor only after the class calls " \
+            "parallelize_me!. Add parallelize_me! to each test class that you want to cover. " \
+            "To cover every class, add it to Minitest::Test:"
         end
       end
 

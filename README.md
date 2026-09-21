@@ -19,14 +19,6 @@ It says nothing about code the suite never ran. A branch no test covers could ho
 class variable and this will never notice. The claim is real but narrow, so repeat it with the
 limit attached — the limit is the half people drop.
 
-## Why not fork
-
-A forked runner gives every process its own copy of memory. Shared mutable state keeps working
-there because nothing is shared: each worker mutates its own copy and never notices. The bug
-survives the suite that was meant to find it.
-
-A Ractor has no copy to fall back on. It refuses, and the refusal is the finding.
-
 ## Install
 
 ```ruby
@@ -80,7 +72,8 @@ They run in the main Ractor, pass normally, and produce no findings. The report 
 their own thing, because the scope of the proof depends on it:
 
 ```
-3 of 5 tests ran in Ractors, and none of them reached shared mutable state. 2 asked not to.
+3 of 5 tests ran in Ractors, and none of them reached shared mutable state. 2 tests used
+runs_on_the_main_ractor!.
 ```
 
 **Watch that second number.** It is the only way to silence a finding, so a suite where it grows
@@ -123,20 +116,28 @@ minitest-ractor: 4 findings under 2 causes
        can not set instance variables of classes/modules by non-main Ractors
 
      What to do:
-       A worker may not WRITE a class or module instance variable at all,
-       shareable value or not, so make_shareable will not help here. Either
-       warm it in the main Ractor before the run, or move the state onto the
-       instance.
+       A worker cannot write a class or module instance variable. This
+       applies to all values, shareable or not. Ractor.make_shareable does
+       not help. Set the variable in the main Ractor before the run, or move
+       the state to the instance.
 
      Reached by:
        CatalogueTest#test_reads_the_memo
        ...and 2 more
 
-  2. 1 finding (25%)  constant: Catalogue::SIZES
-     ...
+  2. 1 finding (25%)  constant: RbConfig::CONFIG
+     first seen at lib/catalogue.rb:18:in 'Catalogue.platform'
+
+     What to do (not your code, so this is a workaround):
+       RbConfig::CONFIG belongs to Ruby. You cannot change the definition.
+       Do not call Ractor.make_shareable on it: that freezes it for every
+       other library in this process. The line that reads it is in your
+       project. Make your own copy and read the copy: MINE =
+       Ractor.make_shareable(RbConfig::CONFIG, copy: true). The option
+       copy: true keeps the original unfrozen.
 
 ----------------------------------------------------------------------------
-1 ordinary failure is not listed above.
+This report does not list 1 ordinary failure.
 ```
 
 Findings are grouped **by cause, never by test**. One memoised variable reached by two thousand
@@ -154,8 +155,16 @@ same advice would send you off to freeze something that could never have helped.
 
 ## Fixing what it finds
 
-Findings sort into three tiers, and the tier matters more than the count. Everything below was
-measured on Ruby 4.0.7 by `probes/escape_hatches.rb`.
+Findings sort into three tiers, and the tier matters more than the count. **The report says which
+tier each cause is in**, on the `What to do` line, so three findings you can fix and three you
+cannot are never presented as the same afternoon.
+
+The tier turns on two questions, and asking only the first gets it wrong. *Who owns the thing* —
+your code, a gem, Ruby itself — and *who owns the line that reached it*. A worker reading
+`RbConfig::CONFIG` from your own file is refused at **your** line, so the backtrace alone would
+call it yours and send you off to freeze the standard library.
+
+Everything below was measured on Ruby 4.0.7 by `probes/escape_hatches.rb`.
 
 ### Yours to fix
 
@@ -278,6 +287,14 @@ The number to notice is not really ours: **threads bought 1.05×** across twelve
 the ceiling on CPU-bound Ruby in one process, and it is why the pool looks good here. An
 IO-bound suite would not show this at all, since threads wait perfectly well. No comparison
 against a fork-based runner has been made.
+
+## Why not fork
+
+A forked runner gives every process its own copy of memory. Shared mutable state keeps working
+there because nothing is shared: each worker mutates its own copy and never notices. The bug
+survives the suite that was meant to find it.
+
+A Ractor has no copy to fall back on. It refuses, and the refusal is the finding.
 
 ## Non-goals
 

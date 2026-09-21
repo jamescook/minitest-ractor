@@ -125,7 +125,7 @@ module Minitest
       def self.undeliverable(job, error)
         klass, method_name = job
         instance = klass.new method_name
-        trouble  = RuntimeError.new "its result could not be sent from the worker that ran it " \
+        trouble  = RuntimeError.new "The worker could not send the result of this test " \
                                     "(#{error.class}: #{error.message.to_s.lines.first.to_s.strip})"
         trouble.set_backtrace []
         instance.failures << ::Minitest::UnexpectedError.new(trouble)
@@ -220,8 +220,8 @@ module Minitest
       # the defect, since this line is the only explanation of why nothing else printed.
       def interrupted!
         tests   = "#{@completed} test#{'s' unless @completed == 1}"
-        message = "\nInterrupted after #{tests}. No inventory: its counts would describe a run " \
-                  "that did not finish."
+        message = "\nInterrupted after #{tests}. This run shows no inventory. The counts apply " \
+                  "to a complete run only."
 
         $stdout.flush
         $stderr.puts message # rubocop:disable Style/StderrPuts
