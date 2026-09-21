@@ -16,14 +16,14 @@ Ruby 4.x only. There is no 3.x fallback and there will not be one.
 **Green means no shared mutable state was reached _by these tests_.**
 
 It says nothing about code the suite never ran. A branch no test covers could hold a memoised
-class variable and this will never notice. The claim is real but narrow, and it is worth
-repeating with the limit attached, because the limit is the half people drop.
+class variable and this will never notice. The claim is real but narrow, so repeat it with the
+limit attached — the limit is the half people drop.
 
 ## Why not fork
 
 A forked runner gives every process its own copy of memory. Shared mutable state keeps working
-there, precisely because nothing is shared — each worker mutates its own copy and never
-notices. The bug survives the suite that was meant to find it.
+there because nothing is shared: each worker mutates its own copy and never notices. The bug
+survives the suite that was meant to find it.
 
 A Ractor has no copy to fall back on. It refuses, and the refusal is the finding.
 
@@ -65,8 +65,8 @@ MT_RACTOR=1 rake test
 
 Some tests exist to exercise registration — adding a plugin, a font, a guardrail, a
 middleware. Registering usually *defines methods on a class*, which changes the whole process
-by design, because that is what the feature is. A worker may not do that, and rewriting such a
-test so that it could would mean not testing the feature.
+by design, because that is what the feature is. A worker may not do that. Rewrite the test so
+a worker can run it and you are no longer testing the feature.
 
 Those classes say so:
 
@@ -84,9 +84,9 @@ their own thing, because the scope of the proof depends on it:
 ```
 
 **Watch that second number.** It is the only way to silence a finding, so a suite where it grows
-is a suite quietly narrowing what it proves. It is per class rather than per test on purpose: a
-whole file is the honest unit when the file is about registration, and a per-test form would
-invite marking one test to hide a problem its siblings share.
+is a suite quietly narrowing what it proves. The switch is per class, not per test: a file about
+registration is a whole unit, and a per-test switch would invite marking one test to hide a
+problem its siblings share.
 
 ## Auditing a suite you have not prepared
 
@@ -144,13 +144,13 @@ tests is one thing to fix and one entry here. A C extension that refuses is one 
 many places reach it.
 
 A test that failed for reasons that have nothing to do with Ractors is an **ordinary failure**.
-Those are counted and never listed. Keeping the two apart is what makes the numbers worth
-reading, so the report says so out loud.
+Those are counted and never listed. Mixing them in would make every number above meaningless,
+so the report states which is which.
 
 The advice differs by cause because the rule does. A class instance variable or a constant
-holding a *shareable* value can be read from a worker perfectly well, so `Ractor.make_shareable`
-is a genuine one-line fix there. A class variable or a global is refused even when its value is
-shareable, so the same advice would send you to freeze something that was never going to help.
+holding a *shareable* value can be read from a worker, so `Ractor.make_shareable` is a one-line
+fix there. A class variable or a global is refused even when its value is shareable, and the
+same advice would send you off to freeze something that could never have helped.
 
 ## Fixing what it finds
 
@@ -161,11 +161,11 @@ measured on Ruby 4.0.7 by `probes/escape_hatches.rb`.
 
 Your own memoised variables, constants and globals. The report names them and says what to do.
 The one that surprises people: a class or module instance variable holding a **shareable** value
-can be read from a worker perfectly well, so memoising is not itself the problem — `@thing =
+can be read from a worker, so memoising is not itself the problem — `@thing =
 Ractor.make_shareable(...)` at load time is usually the whole fix. A class variable or a global
-is refused even when its value is shareable, so those have to go rather than be frozen.
+is refused even when its value is shareable. Freezing those does nothing; they have to go.
 
-Where you need a genuine per-process cache, Ruby has a legal replacement for `@thing ||=`:
+Where you need a per-process cache, Ruby has a legal replacement for `@thing ||=`:
 
 ```ruby
 def self.index
@@ -173,8 +173,8 @@ def self.index
 end
 ```
 
-Storage is **per worker**, not per process, so the block runs once in each. That suits a cache
-and not an expensive one-time build — across twelve workers you pay for it twelve times.
+Storage is **per worker**, not per process, so the block runs once in each. Good for a cache,
+bad for an expensive one-time build: across twelve workers you pay for it twelve times.
 
 For methods built with `define_method`, whose blocks are Procs and are refused, either use
 `Ractor.shareable_proc` or generate real methods with a string `class_eval`. Both work.
@@ -223,7 +223,7 @@ could do — indistinguishable from success, and nobody ever finds out. Both are
 
 - **`MT_CPU=1` with `--ractor`.** `MT_CPU=1` switches Minitest's parallel executor off before
   your test files load, so `parallelize_me!` already did nothing by the time a command-line flag
-  can be read. This raises rather than running. Use `MT_RACTOR=1`, which is read early enough.
+  can be read. So it refuses to start. Use `MT_RACTOR=1`, which is read early enough.
 - **Nothing reached a Ractor.** Usually a missing `parallelize_me!`. The report says `NO PROOF`
   instead of `no findings`.
 
@@ -246,9 +246,9 @@ does not spread work across machines.
 
 If what you want is a suite split across CI workers, that is a different problem, and
 [Shopify's ci-queue](https://github.com/Shopify/ci-queue) is the thing to look at. It
-distributes tests over many workers using a queue, typically Redis-backed, handing work out as
-each worker comes free rather than pre-splitting it, and re-queueing the tests of a worker that
-dies. It ships a `minitest-queue` runner, so it fits a Minitest suite directly.
+distributes tests over many workers using a queue, typically Redis-backed. Nothing is pre-split:
+work goes out as each worker comes free, and the tests of a worker that dies are re-queued. It
+ships a `minitest-queue` runner, so it fits a Minitest suite directly.
 
 The two are not alternatives and do not compete. ci-queue spreads a suite over machines to
 finish sooner; this proves the code those tests reached holds no shared mutable state. Running
@@ -256,8 +256,7 @@ ci-queue in CI and this on a laptop is a perfectly sensible arrangement.
 
 ## Speed
 
-It is not what this is for, but it is usually faster, and the numbers are worth being precise
-about rather than vague.
+Not what this is for, but it is usually faster, and here are the numbers.
 
 `benchmark/run.rb` builds a dummy suite and runs the whole thing through each executor in turn.
 It checks that every mode passes every test before it times anything, because a mode that fails
@@ -273,16 +272,16 @@ fast looks wonderful on a benchmark.
 
 **On this machine**: Apple M2 Max, 12 cores (8 performance, 4 efficiency), 32 GB, macOS 26.5.2,
 Ruby 4.0.7. Yours will differ, and so will the same machine under load — an earlier run while
-the box was busy gave 4.06× rather than 7.16×. Re-run it rather than trusting anything here.
+the box was busy gave 4.06×. Re-run the benchmark; don't trust anything here.
 
-The number to notice is not really ours: it is that **threads bought 1.05×** across twelve
-cores. That is the ceiling on CPU-bound Ruby in one process, and it is why the pool looks good
-here. An IO-bound suite would not show this at all, since threads wait perfectly well. No
-comparison against a fork-based runner has been made.
+The number to notice is not really ours: **threads bought 1.05×** across twelve cores. That is
+the ceiling on CPU-bound Ruby in one process, and it is why the pool looks good here. An
+IO-bound suite would not show this at all, since threads wait perfectly well. No comparison
+against a fork-based runner has been made.
 
 ## Non-goals
 
-- **Not tuned for speed**, though it is usually faster. See *Speed* below.
+- **Not tuned for speed**, though it is usually faster. See *Speed* above.
 - **Minitest only.** Not RSpec.
 - **Not distributed.** One machine, one process. See *Where this fits* above.
 - **Not a general Ractor toolkit.** The parts here exist to run tests and explain refusals.
