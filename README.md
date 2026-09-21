@@ -1,5 +1,14 @@
 # minitest-ractor
 
+> [!WARNING]
+> **Alpha — 0.1.0.** The API, the flag names and the shape of the report can all change without
+> notice. It has been run against a handful of real suites, not a wide sample, so expect
+> refusals it does not yet recognise and advice that is wrong for your case. Ractors are
+> themselves flagged experimental by Ruby.
+>
+> Do not put it on a critical CI path yet. A finding is worth checking by hand before you act
+> on it.
+
 Runs your Minitest suite in a pool of Ractors instead of a pool of threads.
 
 A Ractor may not touch mutable state another Ractor can see. Ruby refuses, at the moment of
