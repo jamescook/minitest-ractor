@@ -22,8 +22,8 @@ namespace :hooks do
   desc "Point git at .githooks (core.hooksPath is local config, so a fresh clone needs this)"
   task :install do
     sh "git config core.hooksPath .githooks"
-    puts "git hooks wired. They reject references to docs/adr/ and to bead ids, neither of"
-    puts "which is checked in, so a reference to either dangles for every other reader."
+    puts "git hooks wired. A commit message may not reference anything under docs/, which is"
+    puts "not checked in, so a reference to it dangles for every other reader."
   end
 end
 
