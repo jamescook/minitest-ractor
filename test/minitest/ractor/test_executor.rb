@@ -237,6 +237,42 @@ class TestExecutor < Minitest::Test
     assert_empty @reporter.recorded
   end
 
+  # Ruby has no way to READ a signal handler: Signal.trap is the only accessor and it sets as
+  # well as gets. So swap in something harmless, keep what fell out, and put it straight back.
+  def current_int_handler
+    handler = Signal.trap "INT", "DEFAULT"
+    Signal.trap "INT", handler
+    handler
+  end
+
+  # Ctrl+C has to reach the pool rather than minitest, which rescues Interrupt and then prints
+  # every failure it had collected anyway. Borrowed, though, not taken: a process where the pool
+  # has shut down is no longer the pool's to answer for.
+  def test_the_pool_answers_ctrl_c_while_it_is_up_and_hands_it_back_afterwards
+    before = current_int_handler
+
+    @executor.start
+
+    assert_kind_of Proc, current_int_handler, "the pool has to be what answers Ctrl+C"
+
+    @executor.shutdown
+
+    assert_equal before, current_int_handler
+  end
+
+  # Killing the process out from under somebody is a large thing for a library object to do, and
+  # a program driving this directly may have its own idea of what Ctrl+C means.
+  def test_a_caller_can_keep_ctrl_c_for_itself
+    before   = current_int_handler
+    executor = Minitest::Ractor::Executor.new(1, trap_interrupt: false)
+
+    executor.start
+
+    assert_equal before, current_int_handler
+  ensure
+    executor.shutdown
+  end
+
   def test_the_pool_survives_shared_mutable_state_and_keeps_working
     @executor.start
     @executor << [UnsafeFixture, "test_reads_a_class_level_ivar", @reporter]

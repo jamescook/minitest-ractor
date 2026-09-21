@@ -15,6 +15,7 @@ require "open3"
 class TestPluginIntegration < Minitest::Test
   FIXTURE        = File.expand_path "../../fixtures/plugin_suite.rb", __dir__
   UNPARALLELISED = File.expand_path "../../fixtures/unparallelised_suite.rb", __dir__
+  SLOW           = File.expand_path "../../fixtures/slow_suite.rb", __dir__
   LIB            = File.expand_path "../../../lib", __dir__
 
   # The parent process may have any of these set; a test about environment variables cannot
@@ -147,6 +148,57 @@ class TestPluginIntegration < Minitest::Test
 
     assert_predicate status, :success?, output
     assert_includes output, "RAN: test_one"
+  end
+
+  # Ctrl+C, in a real process, because there is nowhere else it can be tested: what was wrong was
+  # entirely about what minitest does AFTER an Interrupt is rescued, and about the exit status.
+  #
+  # Waits for the suite to say it is running before signalling, rather than guessing at how long
+  # a Ruby process takes to boot on a machine somebody else is also using.
+  def interrupt_mid_run
+    command = [BASE_ENV.merge("MT_RACTOR_WORKERS" => "2"), RbConfig.ruby, "-W0", "-I#{LIB}",
+               SLOW, "--ractor"]
+
+    Open3.popen2e(*command) do |stdin, out, wait|
+      stdin.close
+      running = out.gets # nil means it died before it ever started; the assertions will say so
+
+      if running
+        sleep 0.5 # long enough for a few tests to finish, so there is a pile to NOT print
+        Process.kill "INT", wait.pid
+      end
+
+      ["#{running}#{out.read}", wait.value]
+    end
+  end
+
+  # What it used to do: rescue the Interrupt, drain every test still in flight, and then print all
+  # 36 failures it had collected with their backtraces — 247 lines arriving after the signal, at
+  # a prompt the user already had back.
+  def test_ctrl_c_stops_the_run_without_emptying_itself_into_the_terminal
+    output, = interrupt_mid_run
+
+    assert_includes output, "Interrupted after", "an interrupted run still has to say so"
+    refute_includes output, "Error:", "the failures it had collected are not worth printing now"
+    refute_includes output, "runs,", "and neither is minitest's summary of a run that did not end"
+  end
+
+  # THE PRINCIPLED HALF. The inventory's counts, its coverage line and its NO PROOF check are all
+  # claims about a COMPLETE run. Printed for a partial one they are simply false: an interrupted
+  # 120-test run reported "36 of 36 tests ran in Ractors", which reads as full coverage.
+  def test_an_interrupted_run_claims_no_proof_at_all
+    output, = interrupt_mid_run
+
+    refute_includes output, "minitest-ractor:", "a run that did not finish has no inventory"
+    refute_includes output, "ran in Ractors", "and no coverage figure either"
+  end
+
+  # 128 + SIGINT, so a shell and a CI runner both read it as "somebody stopped this", rather than
+  # as the test failure it used to exit with.
+  def test_an_interrupted_run_exits_with_the_signal_status
+    _, status = interrupt_mid_run
+
+    assert_equal 130, status.exitstatus
   end
 
   def test_the_pool_size_can_be_set_from_the_environment

@@ -22,14 +22,22 @@ module Minitest
     # That puts scheduling here, which is where it wants to be anyway: this is also where the
     # reporter lives, and the reporter must never cross into a worker.
     class Executor
+      # 128 + SIGINT, which is what a shell reports for a process stopped by Ctrl+C.
+      INTERRUPTED = 130
+
       attr_reader :size
 
-      def initialize(size = self.class.default_size)
-        @size        = size
-        @workers     = []
-        @idle        = []
-        @pending     = {}
-        @outstanding = 0
+      # trap_interrupt: is on because the behaviour without it is broken rather than merely
+      # different — see #trap_interrupt!. Off is for a library user driving this object directly,
+      # who may reasonably want Ctrl+C to mean whatever the rest of their program says it means.
+      def initialize(size = self.class.default_size, trap_interrupt: true)
+        @size            = size
+        @workers         = []
+        @idle            = []
+        @pending         = {}
+        @outstanding     = 0
+        @completed       = 0
+        @trap_interrupt  = trap_interrupt
       end
 
       def self.default_size
@@ -127,6 +135,7 @@ module Minitest
 
       def start
         ShareableConstants.apply!
+        trap_interrupt!
 
         @results = ::Ractor::Port.new
         @workers = Array.new(size) { |id| spawn(id) }
@@ -150,6 +159,9 @@ module Minitest
         self
       end
 
+      # The drain at the top is where an interrupted run spends its time — every test already in
+      # flight still has to finish — so the handler stays installed across it and comes off only
+      # once there is nothing left to interrupt.
       def shutdown
         collect_one while @outstanding.positive?
 
@@ -159,9 +171,63 @@ module Minitest
         @workers = []
         @idle    = []
         self
+      ensure
+        untrap_interrupt!
       end
 
       private
+
+      # CTRL+C, AND WHAT IT COSTS TO LEAVE IT TO MINITEST.
+      #
+      # Minitest rescues Interrupt and then carries straight on to parallel_executor.shutdown and
+      # reporter.report regardless, so a run stopped a third of the way through still drains
+      # every test in flight and then prints every failure it had collected, each with its
+      # backtrace, with the inventory underneath. Measured on a 120-test run interrupted at 36:
+      # 247 lines and 17KB arriving AFTER the signal. From the prompt it reads as the process
+      # ignoring Ctrl+C and then emptying itself into the terminal a moment later.
+      #
+      # AND THE INVENTORY WOULD BE WRONG, which is the half that matters. That run printed "36 of
+      # 36 tests ran in Ractors" — a coverage claim, stated confidently, about a run that was
+      # abandoned at 36 of 120. The counts, the coverage line and the NO PROOF check are all
+      # claims about a COMPLETE run, and a partial one has no honest version of them. Better to
+      # print nothing than to answer "what did this prove" with a number that describes a
+      # different run.
+      #
+      # So the pool owns INT for as long as it is up, and hands it back on the way out.
+      def trap_interrupt!
+        return unless @trap_interrupt && @previous_handler.nil?
+
+        @previous_handler = Signal.trap("INT") { interrupted! }
+      end
+
+      def untrap_interrupt!
+        Signal.trap "INT", @previous_handler if @previous_handler
+        @previous_handler = nil
+      end
+
+      # exit! rather than raising, because raising is precisely what happens already: Interrupt
+      # reaches minitest, which rescues it and prints the pile. exit! skips at_exit, so no report
+      # runs at all — and it skips flushing too, hence doing that by hand first. The progress dots
+      # written so far are worth keeping, since they are how far it got.
+      #
+      # A second Ctrl+C needs nothing: this one ends the process at the first safe point, and
+      # anything queued behind it never gets one.
+      #
+      # $stderr.puts rather than warn because warn is a NO-OP UNDER -W0, which is the flag every
+      # Ractor suite runs with to silence Ruby's experimental notice. Minitest's own "Interrupted.
+      # Exiting..." goes through warn and is therefore invisible in exactly the situation it is
+      # for. Style/StderrPuts wants warn so that output can be disabled; here being disablable is
+      # the defect, since this line is the only explanation of why nothing else printed.
+      def interrupted!
+        tests   = "#{@completed} test#{'s' unless @completed == 1}"
+        message = "\nInterrupted after #{tests}. No inventory: its counts would describe a run " \
+                  "that did not finish."
+
+        $stdout.flush
+        $stderr.puts message # rubocop:disable Style/StderrPuts
+        $stderr.flush
+        exit! INTERRUPTED
+      end
 
       # A class that said runs_on_the_main_ractor!. Asked rather than assumed, because a runnable
       # need not be a Minitest::Test at all.
@@ -178,6 +244,7 @@ module Minitest
         result = self.class.result_for klass, method_name
         result.metadata[:minitest_ractor_opted_out] = true
         reporter.record result
+        @completed += 1
         self
       end
 
@@ -221,6 +288,7 @@ module Minitest
       def collect_one
         id, result = @results.receive
         @outstanding -= 1
+        @completed   += 1
         @idle << id
         restore_backtraces result
         @pending.delete(id).record result
