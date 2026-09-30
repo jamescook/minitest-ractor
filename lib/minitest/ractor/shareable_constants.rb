@@ -46,7 +46,7 @@ module Minitest
       #   Minitest @info_signal        main Ractor only.
       #
       # A worker reaching any of these is a bug in this gem, not something to paper over here.
-      IVARS = ["Minitest.backtrace_filter"].freeze
+      IVARS = ["Minitest.backtrace_filter", "Minitest::Assertions.diff"].freeze
 
       class MissingConstant < StandardError; end
 
@@ -65,6 +65,7 @@ module Minitest
         end
 
         record["Minitest.backtrace_filter"] = share_backtrace_filter
+        record["Minitest::Assertions.diff"] = share_diff_command
         @patched = ::Ractor.make_shareable record
         self
       end
@@ -140,7 +141,31 @@ module Minitest
         :made_shareable
       end
 
-      private_class_method :resolve, :share_constant, :share_backtrace_filter
+      # Works out Minitest's diff command here in the main Ractor, so that a worker never has to.
+      #
+      # When assert_equal fails on long values it shows a diff, and asks
+      # Minitest::Assertions.diff which program to run. The first call works that out by reading
+      # RbConfig::CONFIG, which a worker may not read, and saves the answer in @diff on the
+      # module. So in a worker, a wrong assert_equal raised Ractor::IsolationError instead of
+      # failing. It was reported as an error with no diff, and the inventory listed it as a
+      # finding.
+      #
+      # Once @diff is set, Assertions.diff returns it without reading RbConfig, and a worker can
+      # read @diff because the value is shareable. The value goes back through Minitest's own
+      # Assertions.diff= setter, and no method is redefined. The rest of the diff, a Tempfile and
+      # a call to the diff program, already works in a worker.
+      #
+      # The namespace walk that produced CONSTANTS missed this, because @diff doesn't exist until
+      # the first diff.
+      def self.share_diff_command
+        command = ::Minitest::Assertions.diff
+        return :left_alone if ::Ractor.shareable?(command)
+
+        ::Minitest::Assertions.diff = ::Ractor.make_shareable command
+        :made_shareable
+      end
+
+      private_class_method :resolve, :share_constant, :share_backtrace_filter, :share_diff_command
     end
   end
 end

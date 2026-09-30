@@ -314,9 +314,12 @@ some future Minitest — so they are listed rather than buried.
 Ractor can see, and Minitest keeps several in constants — `PASSTHROUGH_EXCEPTIONS`, `SIGNALS`,
 `SETUP_METHODS` and others — so without this a test cannot run in a worker *at all*. There is no
 API for making somebody else's constants shareable, so `lib/minitest/ractor/shareable_constants.rb`
-replaces each one with a shareable copy via `remove_const` and `const_set`, and does the same for
-`Minitest.backtrace_filter`. Anything already shareable is left alone. Ask what it did on your
-Minitest:
+replaces each one with a shareable copy via `remove_const` and `const_set`. It also freezes two
+values that Minitest keeps on its modules, through Minitest's own setters:
+`Minitest.backtrace_filter`, and `Minitest::Assertions.diff`, the diff program that a failed
+`assert_equal` runs. Minitest finds that program the first time it needs a diff, and to find it
+Minitest reads `RbConfig::CONFIG`, which a worker cannot read. So the pool finds it once, before
+the run. Anything already shareable is left alone. Ask what it did on your Minitest:
 
 ```ruby
 puts Minitest::Ractor::ShareableConstants.report

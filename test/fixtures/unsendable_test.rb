@@ -2,19 +2,19 @@
 
 require "minitest"
 
-# Results carrying things a Ractor::Port cannot copy.
+# Tests whose results a Ractor::Port can't send as they are.
 #
-# A Port COPIES what it sends, and not everything can be copied. The two halves behave quite
-# differently, which is the reason this fixture has both:
+# A Port copies what it sends and raises if part of it can't be copied. Each test here makes
+# the copy fail in a different way, which exercises the fallbacks in Executor.deliver:
 #
-#   AN EXCEPTION IS ALREADY SAFE. Ruby neuters one it cannot copy, so it arrives as a plain
-#   RuntimeError reading "Neutered Exception <OriginalClass>: <message>" with its instance
-#   variables dropped. Costs a little detail and nothing else.
+#   An exception that Marshal.dump rejects, like CarriesAProc. Minitest replaces it with a
+#   "Neutered Exception" RuntimeError before the worker sends anything.
 #
-#   METADATA IS NOT. Minitest documents it as "plain (read: marshal-able) data", but that is a
-#   docstring rather than a check, and a Result holding a Proc there is an ordinary object graph
-#   rather than an exception. Nothing neuters it: the send raises, and the worker used to die
-#   with its job still outstanding while shutdown waited for a result that could never arrive.
+#   An exception that Marshal accepts but a Port can't copy. A NameError stores its message as a
+#   NameError::message object, which is one of these, so Minitest lets it through. The same goes
+#   for any exception in the causes of an assertion failure, which Minitest doesn't check.
+#
+#   Metadata holding a Proc. Minitest asks for marshal-able data there but doesn't check.
 class UnsendableFixture < Minitest::Test
   class CarriesAProc < StandardError
     def initialize(message = "an error holding a Proc")
@@ -31,6 +31,42 @@ class UnsendableFixture < Minitest::Test
     metadata[:a_proc] = -> { :never_called }
 
     assert_equal 4, 2 + 2
+  end
+
+  # Its #message depends on an instance variable, and that variable holds a Proc, which a Port
+  # can't copy. It is raised inside assert_raises so that it becomes the cause of the assertion
+  # failure. Raised directly, it would be neutered by Minitest's Marshal check first.
+  class BuildsItsOwnMessage < StandardError
+    def initialize
+      @source = -> { "a Proc" }
+      super
+    end
+
+    def message
+      "built from #{@source.call}"
+    end
+  end
+
+  def test_calls_a_method_that_does_not_exist
+    no_such_method
+  end
+
+  def test_calls_a_method_its_object_does_not_have
+    Object.new.no_such_method
+  end
+
+  def test_expects_an_argument_error_and_gets_a_name_error
+    assert_raises(ArgumentError) { no_such_method }
+  end
+
+  def test_expects_an_argument_error_and_gets_one_that_builds_its_own_message
+    assert_raises(ArgumentError) { raise BuildsItsOwnMessage }
+  end
+
+  def test_notes_something_then_calls_a_method_that_does_not_exist
+    metadata[:note] = "kept"
+
+    no_such_method
   end
 
   def test_is_perfectly_fine

@@ -77,39 +77,115 @@ module Minitest
         end
       end
 
-      # Gets a result home, whatever it is carrying.
+      # Sends a worker's result to the main Ractor, even when the result can't be sent as it is.
       #
-      # A Ractor::Port COPIES what it sends, and not everything can be copied. Exceptions are
-      # already safe without us: Ruby neuters one it cannot copy, and it arrives as a plain
-      # RuntimeError reading "Neutered Exception <OriginalClass>: <message>" with its instance
-      # variables dropped. So a test raising something exotic costs a little detail and nothing
-      # else.
+      # Ractor::Port#send copies the object it is given, and raises if any part of it can't be
+      # copied. If that error escaped, the worker would die with its job still counted as
+      # outstanding, and #shutdown would wait for that job forever.
       #
-      # METADATA IS THE HOLE. Minitest documents it as "plain (read: marshal-able) data", but
-      # that is a docstring, not a check, and a Result holding a Proc there is an ordinary object
-      # graph rather than an exception — so it is not neutered, the send raises "allocator
-      # undefined for Proc", the worker dies with its job still outstanding, and shutdown waits
-      # for a result that can never arrive. Measured, and it hung the pool exactly like a dead
-      # worker did.
+      # Two parts of a Result are known to fail the copy. The first is a failure's exception.
+      # Minitest replaces any exception that Marshal.dump rejects with a "Neutered Exception"
+      # RuntimeError, but Marshal and the Port don't agree on everything: a NameError stores its
+      # message as a NameError::message object, which Marshal can dump and a Port can't copy.
+      # Minitest also never checks the causes of an assertion failure. The second is metadata,
+      # which Minitest asks to be marshal-able data but doesn't check, so it can hold a Proc.
       #
-      # So: try it, then try again without the metadata this gem did not put there, and failing
-      # that send a result that says what happened. Losing one test's metadata is a small price;
-      # losing the run to a deadlock is not.
-      # Nested rather than two rescue clauses on one begin: a raise inside a rescue body
-      # propagates, it does not fall through to the next clause.
+      # When the first send fails, this tries each of FALLBACKS in turn. They change the same
+      # result, so the second one also has the first one's change. If none of them works, the
+      # worker sends a result that only says the send failed. Failures are rebuilt before
+      # metadata is dropped, because the rebuilt failures print the same, while dropped metadata
+      # is gone for any plugin that wanted it.
       def self.deliver(result, home:, worker:, job:)
         home.send [worker, result]
       rescue StandardError => e
-        begin
-          home.send [worker, stamp(without_foreign_metadata(result), worker)]
-        rescue StandardError
-          home.send [worker, stamp(undeliverable(job, e), worker)]
-        end
+        return if FALLBACKS.any? { |fallback| sent? home, worker, fallback, result }
+
+        home.send [worker, stamp(undeliverable(job, e), worker)]
+      end
+
+      # Tried in this order by .deliver. Each one takes a result, changes it and returns it.
+      FALLBACKS = %i[with_portable_failures without_foreign_metadata].freeze
+
+      # Applies one fallback and sends again. Returns false if either step raises, so that
+      # .deliver moves on to the next fallback.
+      def self.sent?(home, worker, fallback, result)
+        home.send [worker, stamp(public_send(fallback, result), worker)]
+        true
+      rescue StandardError
+        false
       end
 
       def self.stamp(result, worker)
         result.metadata[:minitest_ractor_worker] = worker
         result
+      end
+
+      # Replaces each failure with a copy that keeps only its class, message, backtrace and
+      # causes, all of which a Port can copy. Any other instance variables on the exceptions are
+      # dropped. Minitest's reporters don't print them.
+      def self.with_portable_failures(result)
+        result.failures.map! { |failure| portable failure }
+        result
+      end
+
+      # Most failures are the exception itself, and the copy replaces it. An UnexpectedError
+      # instead wraps the exception that a test raised, so the wrapped exception is copied and a
+      # dup of the wrapper points at the copy. UnexpectedError.new would also work, except for a
+      # SystemStackError: .new compresses its backtrace again and replaces its message with the
+      # frame counts.
+      def self.portable(failure)
+        holder = ErrorChain.holder failure
+        copy   = ErrorChain.of(failure).reverse.reduce(nil) { |cause, error| rebuilt error, cause }
+        return copy if holder.equal? failure
+
+        wrapper = failure.dup
+        wrapper.error = copy
+        wrapper
+      end
+
+      # A copy of one exception that a Port can send, with an already-copied cause attached.
+      #
+      # The copy keeps the original class when it can, because Minitest prints the class name
+      # and the Classifier checks for Ractor::Error. When it can't (see .same_class), the copy is
+      # a RuntimeError whose message starts with the original class name.
+      #
+      # Ruby only sets #cause when an exception is raised, so the copy is raised and rescued
+      # straight away. Its backtrace is set before that, and raise leaves an existing backtrace
+      # alone.
+      def self.rebuilt(error, cause)
+        message = error.message.to_s
+        copy    = same_class(error.class, message) ||
+                  bare(RuntimeError, "#{error.class}: #{message}")
+        copy.set_backtrace error.backtrace
+        return copy unless cause
+
+        begin
+          raise copy, cause: cause
+        rescue Exception => e # rubocop:disable Lint/RescueException
+          e
+        end
+      end
+
+      # A bare instance of klass that holds message, or nil if that instance's #message returns
+      # something else.
+      #
+      # That happens when a class overrides #message to build it from instance variables, which
+      # the bare copy doesn't have. Sent anyway, it would print the wrong text, or raise inside
+      # the reporter and stop the whole report. Checking here, in the worker, means the worst
+      # case is that this one test loses its class name.
+      def self.same_class(klass, message)
+        copy = bare klass, message
+        copy if copy.message == message
+      rescue StandardError
+        nil
+      end
+
+      # Calls Exception#initialize directly and skips the subclass's own #initialize, which can
+      # take any arguments at all.
+      def self.bare(klass, message)
+        copy = klass.allocate
+        Exception.instance_method(:initialize).bind_call copy, message
+        copy
       end
 
       # Keeps only what the executor itself attached, which is an Integer and Arrays of Strings

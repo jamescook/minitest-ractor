@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require "test_helper"
+require "minitest/ractor/classifier"
 require "minitest/ractor/executor"
 require "recording_reporter"
 require "fixtures/crossing_test"
@@ -209,16 +210,84 @@ class TestExecutor < Minitest::Test
     refute_nil @reporter.recorded.first.result.metadata[:minitest_ractor_worker]
   end
 
-  # Exceptions need no help from us: Ruby neuters one it cannot copy rather than refusing to
-  # send it. Worth pinning down, because it is the reason this fix is about metadata and not
-  # about failures, which is the opposite of what it looks like from the outside.
-  def test_an_exception_ruby_cannot_copy_is_neutered_rather_than_lost
+  # Minitest replaces an exception that Marshal can't dump before the worker tries to send it.
+  # That check is Minitest's, not Ruby's, and it lets through some exceptions a Port can't copy.
+  # The NameError tests below cover those.
+  def test_an_error_marshal_cannot_dump_arrives_neutered_by_minitest
     run_jobs %w[test_raises_something_holding_a_proc], klass: UnsendableFixture
 
     result = @reporter.recorded.first.result
 
     assert_equal "E", result.result_code
     assert_match(/Neutered Exception.*CarriesAProc/, result.failures.first.message)
+  end
+
+  # A NameError stores its message as a NameError::message object, which Marshal can dump and a
+  # Port can't copy ("can not copy NameError::message object"). Before the fix, the report said
+  # only "The worker could not send the result of this test", with no message or backtrace.
+  def test_a_name_error_arrives_as_itself
+    names = %w[test_calls_a_method_that_does_not_exist test_calls_a_method_its_object_does_not_have]
+
+    run_jobs names, klass: UnsendableFixture
+
+    @reporter.recorded.each do |call|
+      error = call.result.failures.first.error
+
+      assert_equal "E", call.result.result_code
+      assert_kind_of NameError, error
+      assert_match(/undefined (local variable or )?method 'no_such_method'/, error.message)
+      assert_includes error.backtrace.first, "unsendable_test.rb"
+    end
+  end
+
+  # When assert_raises catches the wrong exception, that exception becomes the cause of the
+  # assertion failure, and Minitest doesn't check causes. The result should still be a failure,
+  # with the NameError as its cause.
+  def test_a_name_error_in_a_cause_chain_arrives_as_the_cause
+    run_jobs %w[test_expects_an_argument_error_and_gets_a_name_error], klass: UnsendableFixture
+
+    result = @reporter.recorded.first.result
+    cause  = result.failures.first.cause
+
+    assert_equal "F", result.result_code
+    assert_kind_of NameError, cause
+    assert_includes cause.message, "no_such_method"
+    assert_includes cause.backtrace.join("\n"), "unsendable_test.rb"
+  end
+
+  # A copy of this exception can't rebuild its own message, because the message comes from an
+  # instance variable the copy doesn't have. So it arrives as a RuntimeError whose message names
+  # the original class.
+  def test_an_error_that_builds_its_own_message_arrives_named_and_readable
+    run_jobs %w[test_expects_an_argument_error_and_gets_one_that_builds_its_own_message],
+             klass: UnsendableFixture
+
+    cause = @reporter.recorded.first.result.failures.first.cause
+
+    assert_kind_of RuntimeError, cause
+    assert_equal "UnsendableFixture::BuildsItsOwnMessage: built from a Proc", cause.message
+  end
+
+  # Failures are rebuilt before metadata is dropped, so when the only problem was a NameError,
+  # the metadata still arrives.
+  def test_a_result_whose_failure_was_rebuilt_keeps_its_metadata
+    run_jobs %w[test_notes_something_then_calls_a_method_that_does_not_exist],
+             klass: UnsendableFixture
+
+    assert_equal "kept", @reporter.recorded.first.result.metadata[:note]
+  end
+
+  # Minitest::Assertions.diff reads RbConfig::CONFIG, which a worker may not read. Before the
+  # fix, a wrong assert_equal that needed a diff came back as an error with no diff, and the
+  # inventory listed it as a finding, although the test itself was Ractor-safe.
+  def test_a_failure_that_needs_a_diff_arrives_as_a_failure_with_the_diff
+    run_jobs %w[test_fails_with_a_diff]
+
+    result = @reporter.recorded.first.result
+
+    assert_equal "F", result.result_code
+    assert_includes result.failures.first.message, "--- expected\n+++ actual"
+    assert_nil Minitest::Ractor::Classifier.classify(result), "a wrong assertion is no finding"
   end
 
   def test_the_pool_keeps_working_after_a_result_that_would_not_send

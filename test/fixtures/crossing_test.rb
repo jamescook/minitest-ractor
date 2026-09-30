@@ -17,6 +17,12 @@ class CrossingFixture < Minitest::Test
     assert_equal 5, 2 + 2
   end
 
+  # Long enough that assert_equal shows a diff instead of "Expected: ... Actual: ...", which
+  # takes a different path through Minitest.
+  def test_fails_with_a_diff
+    assert_equal (1..40).to_a, (1..40).to_a.reverse
+  end
+
   def test_errors
     raise ArgumentError, "boom"
   end

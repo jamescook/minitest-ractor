@@ -35,6 +35,16 @@ class TestShareableConstants < Minitest::Test
     assert_equal ["x.rb:1:in 'a'"], filtered
   end
 
+  # Minitest reads RbConfig::CONFIG to find its diff program, which a worker may not do. After
+  # apply! the answer has already been found in the main Ractor, so a diff works in a worker.
+  def test_a_worker_can_diff_two_values
+    diff = Ractor.new(CrossingFixture) do |klass|
+      klass.new("test_passes").diff (1..40).to_a, (1..40).to_a.reverse
+    end.value
+
+    assert_includes diff, "--- expected\n+++ actual"
+  end
+
   # Named so the reason survives: these are unshareable too and must stay that way.
   def test_the_executor_and_the_io_lock_are_left_alone
     refute_includes Patch.patched.keys, "Minitest.parallel_executor"
