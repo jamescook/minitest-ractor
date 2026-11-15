@@ -42,8 +42,14 @@ module Minitest
       # Minitest ANDs passed? across every reporter, so returning false is what makes the run
       # exit non-zero. It judges ONLY whether anything reached a Ractor: failing tests are
       # minitest's business and already counted, and counting them here would count them twice.
+      #
+      # A run where every test said runs_on_the_main_ractor! passes. Each one asked to stay home
+      # and was told yes, so nothing went wrong, and running one file of such tests on its own is
+      # ordinary. The report still says the run proved nothing. A test that stayed home without
+      # asking still fails the run, even beside opt-outs, because that is the mistake this is for.
       def passed?
-        !inventory.proved_nothing?
+        inventory = self.inventory
+        !inventory.proved_nothing? || inventory.everything_opted_out?
       end
 
       def inventory

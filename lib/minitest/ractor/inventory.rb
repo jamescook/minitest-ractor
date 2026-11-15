@@ -101,6 +101,12 @@ module Minitest
         @reached_workers.zero? && @total.positive?
       end
 
+      # Every test that ran said runs_on_the_main_ractor!. Nothing was proved, and nothing went
+      # wrong either: the reporter passes such a run, and the report says so.
+      def everything_opted_out?
+        @opted_out.positive? && @opted_out == @total
+      end
+
       def to_s
         return nothing_found if empty?
 
@@ -276,21 +282,27 @@ module Minitest
         [*heading("NO PROOF — nothing reached a Ractor"),
          "",
          *wrap("#{count(@total, 'test')} ran. No test left the main Ractor. This run tested no " \
-               "code for isolation. THIS IS NOT A PASS.", WIDTH),
+               "code for isolation. #{verdict}", WIDTH),
          "",
          *wrap(why_nothing_ran, WIDTH),
          *parallelize_me_snippet,
          *ordinary_note].join("\n")
       end
 
+      # Only the verdict softens when every test asked to stay home. The run passes, so saying it
+      # did not would be false, but the heading above still says that nothing was proved.
+      def verdict
+        if everything_opted_out?
+          "The run passes because every test asked for this."
+        else
+          "THIS IS NOT A PASS."
+        end
+      end
+
       def parallelize_me_snippet
         return [] if everything_opted_out?
 
         ["", "    class Minitest::Test", "      parallelize_me!", "    end"]
-      end
-
-      def everything_opted_out?
-        @opted_out.positive? && @opted_out == @total
       end
 
       # Two quite different situations, and telling somebody to add parallelize_me! when every

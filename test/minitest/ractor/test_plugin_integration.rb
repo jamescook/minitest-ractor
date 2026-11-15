@@ -16,6 +16,7 @@ class TestPluginIntegration < Minitest::Test
   FIXTURE        = File.expand_path "../../fixtures/plugin_suite.rb", __dir__
   UNPARALLELISED = File.expand_path "../../fixtures/unparallelised_suite.rb", __dir__
   SLOW           = File.expand_path "../../fixtures/slow_suite.rb", __dir__
+  MAIN_RACTOR    = File.expand_path "../../fixtures/main_ractor_suite.rb", __dir__
   LIB            = File.expand_path "../../../lib", __dir__
 
   # The parent process may have any of these set; a test about environment variables cannot
@@ -145,6 +146,46 @@ class TestPluginIntegration < Minitest::Test
 
     assert_predicate status, :success?, output
     assert_includes output, "RAN: test_one"
+  end
+
+  def run_main_ractor_suite(mode)
+    Open3.capture2e BASE_ENV.merge("MAIN_RACTOR_SUITE" => mode), RbConfig.ruby, "-W0",
+                    "-I#{LIB}", MAIN_RACTOR, "--ractor"
+  end
+
+  # POST-FLIGHT, end to end. A run in which every test asked to stay on the main Ractor did what
+  # it was told, and running one file of such tests on its own is an ordinary thing to do.
+  def test_a_run_where_every_test_opted_out_passes
+    output, status = run_main_ractor_suite "opted_out"
+
+    assert_predicate status, :success?, output
+    assert_includes output, "NO PROOF", "the run still says it proved nothing"
+    refute_match(/NOT\s+A\s+PASS/, output, "and does not call a passing run a failure")
+  end
+
+  # The mistake the guard exists for: the same tests, home without having asked to be.
+  def test_a_run_that_stayed_home_by_mistake_still_fails
+    output, status = run_main_ractor_suite "forgot"
+
+    refute_predicate status, :success?, output
+    assert_includes output, "NO PROOF"
+    assert_match(/THIS IS\s+NOT A PASS/, output)
+  end
+
+  # One test home by mistake is enough. The opt-outs beside it do not excuse it.
+  def test_opt_outs_do_not_excuse_a_test_that_stayed_home_by_mistake
+    output, status = run_main_ractor_suite "mixed"
+
+    refute_predicate status, :success?, output
+    assert_match(/THIS IS\s+NOT A PASS/, output)
+  end
+
+  # Passing the proof check must not pass a run with a failing test in it.
+  def test_a_failing_test_still_fails_a_run_where_everything_opted_out
+    output, status = run_main_ractor_suite "opted_out_failing"
+
+    refute_predicate status, :success?, output
+    assert_includes output, "a real failure"
   end
 
   # Ctrl+C, in a real process, because there is nowhere else it can be tested: what was wrong was

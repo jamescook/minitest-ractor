@@ -5,6 +5,7 @@ require "minitest/ractor/reporter"
 require "minitest/ractor/executor"
 require "recording_reporter"
 require "fixtures/crossing_test"
+require "fixtures/opted_out_test"
 
 class TestReporter < Minitest::Test
   Reporter = Minitest::Ractor::Reporter
@@ -37,6 +38,29 @@ class TestReporter < Minitest::Test
     never_left_home = [CrossingFixture.new("test_passes").run]
 
     refute_predicate report_on(never_left_home), :passed?
+  end
+
+  def opted_out(names)
+    recorder = RecordingReporter.new
+    executor = Minitest::Ractor::Executor.new 2
+
+    executor.start
+    names.each { |name| executor << [OptedOutFixture, name, recorder] }
+    executor.shutdown
+
+    recorder.recorded.map(&:result)
+  end
+
+  # Every test asked to stay on the main Ractor and was told yes, so nothing went wrong.
+  def test_a_run_where_every_test_opted_out_passes
+    assert_predicate report_on(opted_out(%w[test_registers_something])), :passed?
+  end
+
+  # The opt-outs beside it do not excuse a test that stayed home without asking.
+  def test_a_test_that_stayed_home_by_mistake_fails_the_run_beside_opt_outs
+    mixed = opted_out(%w[test_registers_something]) + [CrossingFixture.new("test_passes").run]
+
+    refute_predicate report_on(mixed), :passed?
   end
 
   def test_a_run_that_reached_workers_passes

@@ -107,4 +107,13 @@ class TestOptOut < Minitest::Test
     assert_includes report, "runs_on_the_main_ractor!"
     refute_includes report, "parallelize_me!", "that is not the fix when everything opted out"
   end
+
+  # The run passes, so the report must not say it does not. It still says nothing was proved.
+  def test_a_suite_that_entirely_opted_out_is_not_called_a_failure
+    report = Minitest::Ractor::Inventory.from(run_jobs(OptedOutFixture,
+                                                       %w[test_registers_something])).to_s
+
+    refute_match(/NOT\s+A\s+PASS/, report)
+    assert_match(/The\s+run\s+passes\s+because\s+every\s+test\s+asked\s+for\s+this/, report)
+  end
 end
